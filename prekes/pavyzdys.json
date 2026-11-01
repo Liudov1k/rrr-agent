@@ -1,0 +1,29 @@
+{
+  "_paaiskinimas": "Pavyzdys. category_id, quality, status ir car_model yra Ovoko vidiniai ID. Juos sužinosi komanda sarasas, kai .env bus užpildytas. Nuotrauka turi būti vieša https nuoroda.",
+  "automobilis": {
+    "external_id": "auto-1",
+    "car_model": null,
+    "car_years": "2016",
+    "status": null,
+    "car_fuel": null,
+    "car_mileage": 180000,
+    "place": "A-12",
+    "ovoko_id": null
+  },
+  "detale": {
+    "external_id": "detale-1",
+    "category_id": null,
+    "quality": null,
+    "status": null,
+    "price": 45,
+    "original_currency": "EUR",
+    "manufacturer_code": "",
+    "notes": "Priekinis bamperis, įbrėžimas dešinėje",
+    "place": "A-12",
+    "photo": "https://example.com/bamperis.jpg",
+    "photos": [
+      "https://example.com/bamperis.jpg"
+    ],
+    "ovoko_id": null
+  }
+}

@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="lt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dalies informacija</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2430;
+      --muted: #98a2b3;
+      --line: #e6ebf2;
+      --field: #d5dce6;
+      --paper: #f3f6fa;
+      --blue: #2f6bdb;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 14px;
+    }
+    main {
+      width: min(980px, calc(100% - 24px));
+      margin: 16px auto 48px;
+    }
+    .banner, .result {
+      margin: 0 0 14px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #fff4e8;
+      color: #8a4b12;
+    }
+    .result { margin-top: 14px; }
+    .result.ok { background: #e8f6ef; color: #0a5537; }
+    form { display: grid; gap: 14px; }
+    section, .car {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px 18px 18px;
+    }
+    .card-head {
+      display: flex;
+      width: 100%;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 14px;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      text-align: left;
+    }
+    .card.shut .card-head { margin: 0; }
+    .card.shut .card-body { display: none; }
+    h2 { margin: 0; font-size: 16px; font-weight: 700; }
+    .chev { color: #98a2b3; font-size: 18px; line-height: 1; }
+    .stack { display: grid; gap: 12px; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .dims-title { margin: 6px 0 0; font-size: 14px; font-weight: 700; }
+    .dims { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .wide { grid-column: 1 / -1; }
+    label { display: grid; gap: 6px; font-size: 13px; font-weight: 650; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--field);
+      border-radius: 6px;
+      min-height: 48px;
+      padding: 12px 14px;
+      font: inherit;
+      font-weight: 450;
+      color: var(--ink);
+      background: #fff;
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    input::placeholder, textarea::placeholder { color: #9aa3b2; }
+    select.field:has(option[value=""]:checked) { color: #9aa3b2; }
+    select.field option { color: var(--ink); }
+    .selectish {
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, #667085 50%),
+        linear-gradient(135deg, #667085 50%, transparent 50%);
+      background-position: calc(100% - 18px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 32px;
+    }
+    .cat { position: relative; }
+    .ghost-label {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #9aa3b2;
+      pointer-events: none;
+    }
+    .ghost-label i { color: #e11d48; font-style: normal; }
+    .cat input:focus + .ghost-label,
+    .cat input:not(:placeholder-shown) + .ghost-label { display: none; }
+    .boxed {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 1px;
+      min-height: 48px;
+      padding: 6px 12px;
+      border: 1px solid var(--field);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .boxed > span { font-size: 11px; font-weight: 500; color: #8b95a7; }
+    .boxed > span i { color: #e11d48; font-style: normal; }
+    .boxed select, .boxed textarea {
+      border: 0;
+      min-height: 0;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      font-weight: 500;
+    }
+    .boxed textarea { min-height: 64px; }
+    .with-count { display: grid; }
+    .counter { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .text-link {
+      justify-self: start;
+      border: 0;
+      background: none;
+      color: var(--blue);
+      padding: 0;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .extra-code { display: grid; }
+    .tile {
+      width: 168px;
+      min-height: 112px;
+      border: 1px dashed #c5ced9;
+      border-radius: 8px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 16px 12px;
+      color: var(--blue);
+      background: #fff;
+    }
+    .plus { font-size: 22px; line-height: 1; font-weight: 500; }
+    .tile-title { font-size: 14px; font-weight: 650; line-height: 1.25; }
+    .tile-actions { display: grid; gap: 4px; margin-top: 8px; }
+    .tile-actions label {
+      position: relative;
+      display: block;
+      min-height: 22px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .tile-actions input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      opacity: 0;
+      font-size: 16px;
+    }
+    .cars { display: grid; gap: 12px; }
+    .car header, .actions, .car-tools {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .car header { margin-bottom: 12px; }
+    .car-tools { margin-bottom: 10px; }
+    button.primary, button.ghost {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary { background: var(--blue); color: white; }
+    button.ghost { background: #eef2f6; color: var(--ink); }
+    .preview { margin: 0 0 10px; color: #667085; }
+    .hint { margin: 8px 0 0; color: #667085; font-size: 12px; }
+    .gallery { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+    .gallery:empty { display: none; }
+    .shot { position: relative; margin: 0; }
+    .shot img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #eef2f6; }
+    .shot button { position: absolute; top: 6px; right: 6px; padding: 6px 10px; }
+    .shot span { display: block; margin-top: 4px; font-size: 12px; color: #667085; font-weight: 500; }
+    .result ul { margin: 8px 0 0; padding-left: 18px; }
+    details summary { cursor: pointer; color: #667085; }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+      .dims, .gallery { grid-template-columns: 1fr 1fr; }
+      .pair { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="banner" class="banner">Tikrinama, ar Ovoko prisijungimas jau įrašytas.</div>
+
+    <form id="forma">
+      <section>
+        <div class="tile">
+          <span class="plus">+</span>
+          <div>
+            <div class="tile-title">Įkelti dalies kodo nuotrauką</div>
+            <div class="tile-actions">
+              <label>Fotografuoti
+                <input class="kodo-nuotrauka" type="file" accept="image/*" capture="environment">
+              </label>
+              <label>Iš galerijos
+                <input class="kodo-nuotrauka" type="file" accept="image/*">
+              </label>
+            </div>
+          </div>
+        </div>
+        <div id="kodo-galerija" class="gallery"></div>
+      </section>
+
+      <section class="card">
+        <button class="card-head" type="button">
+          <h2>Dalies nuotraukos</h2>
+          <span class="chev" aria-hidden="true">⌃</span>
+        </button>
+        <div class="card-body">
+          <div class="tile">
+            <span class="plus">+</span>
+            <div>
+              <div class="tile-title">Įkelti dalies nuotraukas</div>
+              <div class="tile-actions">
+                <label>Fotografuoti
+                  <input class="nuotrauka" type="file" accept="image/*" capture="environment">
+                </label>
+                <label>Iš galerijos
+                  <input class="nuotrauka" type="file" accept="image/*" multiple>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div id="galerija" class="gallery"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <button class="card-head" type="button">
+          <h2>Dalies informacija</h2>
+          <span class="chev" aria-hidden="true">⌃</span>
+        </button>
+        <div class="card-body stack">
+          <input class="field" name="manufacturer_code" placeholder="Pagrindinis dalies kodas">
+          <div id="papildomi-kodai" class="stack"></div>
+          <button class="text-link" type="button" id="prideti-koda">Pridėti kodą</button>
+
+          <div class="cat">
+            <input class="field selectish" name="category_id" inputmode="numeric" required placeholder=" ">
+            <span class="ghost-label">Kategorija <i>*</i></span>
+          </div>
+
+          <div class="pair">
+            <label class="boxed">
+              <span>Kokybė <i>*</i></span>
+              <select name="quality" required>
+                <option value="0" selected>Naudota</option>
+                <option value="1">Nauja</option>
+                <option value="3">Su defektais</option>
+                <option value="4">Restauruota</option>
+              </select>
+            </label>
+            <select class="field selectish" name="position">
+              <option value="">Dalies pozicija</option>
+              <option value="100">Priekyje</option>
+              <option value="110">Gale</option>
+              <option value="80">Priekyje kairėje</option>
+              <option value="90">Priekyje dešinėje</option>
+              <option value="60">Gale kairėje</option>
+              <option value="70">Gale dešinėje</option>
+              <option value="20">Kairėje</option>
+              <option value="40">Dešinėje</option>
+              <option value="30">Centras</option>
+              <option value="10">Visos</option>
+              <option value="50">Komplektas</option>
+            </select>
+          </div>
+
+          <div class="pair">
+            <label class="boxed">
+              <span>Vairo pusė</span>
+              <select name="english">
+                <option value="0" selected>Kairė</option>
+                <option value="1">Dešinė</option>
+              </select>
+            </label>
+            <div class="with-count">
+              <input class="field" name="sticker_note" maxlength="32" placeholder="Etiketės komentaras">
+              <div class="counter" id="etikete-skaitiklis">0/32</div>
+            </div>
+          </div>
+
+          <div class="pair">
+            <label class="boxed">
+              <span>Komentarai pirkėjams</span>
+              <textarea name="notes">Turime daug Land Rover DEFENDER naujų ir naudotų dalių vietoje. We have a lot of new and used parts for Land Rover Defender in stock. У нас на месте есть много новых и б/у запчастей для Land Rover DEFENDER.</textarea>
+            </label>
+            <textarea class="field" name="internal_notes" placeholder="Vidinės pastabos"></textarea>
+          </div>
+
+          <p class="dims-title">Matmenys</p>
+          <div class="dims">
+            <input class="field" name="svoris" inputmode="decimal" placeholder="Svoris, kg">
+            <input class="field" name="ilgis" inputmode="decimal" placeholder="Ilgis, cm">
+            <input class="field" name="plotis" inputmode="decimal" placeholder="Plotis, cm">
+            <input class="field" name="aukstis" inputmode="decimal" placeholder="Aukštis, cm">
+          </div>
+
+          <input type="hidden" name="status" value="0">
+          <input type="hidden" name="price" value="0">
+          <input type="hidden" name="original_currency" value="EUR">
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="car-tools">
+          <h2>Automobiliai</h2>
+          <button class="ghost" type="button" id="prideti">Pridėti automobilį</button>
+        </div>
+        <p class="preview" id="preview">Bus sukurti 2 skelbimai.</p>
+        <div class="cars" id="automobiliai"></div>
+        <p class="hint">Kiekvienas automobilis gaus atskirą skelbimą su tais pačiais dalies duomenimis.</p>
+      </section>
+
+      <div class="actions">
+        <button class="primary" type="submit">Sukurti skelbimus</button>
+      </div>
+    </form>
+    <div id="rezultatas"></div>
+  </main>
+  <script>
+    const cars = document.querySelector("#automobiliai");
+    const preview = document.querySelector("#preview");
+    const banner = document.querySelector("#banner");
+    const result = document.querySelector("#rezultatas");
+    const gallery = document.querySelector("#galerija");
+    const codeGallery = document.querySelector("#kodo-galerija");
+    const picked = [];
+    const codePicked = [];
+
+    function drawList(list, container, labelFor) {
+      container.innerHTML = "";
+      list.forEach((url, index) => {
+        const figure = document.createElement("figure");
+        figure.className = "shot";
+        const image = document.createElement("img");
+        image.src = url;
+        image.alt = labelFor(index);
+        const caption = document.createElement("span");
+        caption.textContent = labelFor(index);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "ghost";
+        remove.textContent = "Šalinti";
+        remove.addEventListener("click", () => {
+          list.splice(index, 1);
+          drawAll();
+        });
+        figure.append(image, remove, caption);
+        container.append(figure);
+      });
+    }
+
+    function drawAll() {
+      drawList(codePicked, codeGallery, () => "Kodo nuotrauka");
+      drawList(picked, gallery, (index) => (index === 0 ? "Pagrindinė" : `Nuotrauka ${index + 1}`));
+    }
+
+    async function preparePhoto(file) {
+      if (typeof createImageBitmap !== "function") return file;
+      try {
+        const bitmap = await createImageBitmap(file);
+        const maxSide = 1600;
+        const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+        bitmap.close?.();
+        if (!blob) return file;
+        return new File([blob], "nuotrauka.jpg", { type: "image/jpeg" });
+      } catch (_error) {
+        return file;
+      }
+    }
+
+    async function uploadPhotos(fileList, target, limit) {
+      const files = [...fileList].slice(0, limit);
+      if (!files.length) return;
+      result.className = "result";
+      for (let index = 0; index < files.length; index += 1) {
+        result.textContent = `Keliama nuotrauka ${index + 1} iš ${files.length}...`;
+        const prepared = await preparePhoto(files[index]);
+        const body = new FormData();
+        body.append("nuotrauka", prepared);
+        const response = await fetch("/api/nuotraukos", { method: "POST", body });
+        const answer = await response.json();
+        if (!response.ok) {
+          result.textContent = answer.klaida || "Nuotraukos įkelti nepavyko.";
+          return;
+        }
+        if (limit === 1) target.splice(0, target.length, answer.nuotraukos[0]);
+        else target.push(...answer.nuotraukos);
+      }
+      result.textContent = "";
+      result.className = "";
+      drawAll();
+    }
+
+    document.querySelectorAll(".kodo-nuotrauka").forEach((input) => {
+      input.addEventListener("change", async (event) => {
+        const files = event.target.files;
+        event.target.value = "";
+        await uploadPhotos(files, codePicked, 1);
+      });
+    });
+
+    document.querySelectorAll(".nuotrauka").forEach((input) => {
+      input.addEventListener("change", async (event) => {
+        const files = event.target.files;
+        event.target.value = "";
+        await uploadPhotos(files, picked, 12);
+      });
+    });
+
+    document.querySelector("#prideti-koda").addEventListener("click", () => {
+      const row = document.createElement("div");
+      row.className = "extra-code";
+      const input = document.createElement("input");
+      input.className = "field";
+      input.name = "extra_code";
+      input.placeholder = "Papildomas kodas";
+      row.append(input);
+      document.querySelector("#papildomi-kodai").append(row);
+      input.focus();
+    });
+
+    const sticker = document.querySelector("[name=sticker_note]");
+    const stickerCount = document.querySelector("#etikete-skaitiklis");
+    sticker.addEventListener("input", () => {
+      stickerCount.textContent = `${sticker.value.length}/32`;
+    });
+
+    document.querySelectorAll(".card-head").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.parentElement.classList.toggle("shut");
+      });
+    });
+
+    function carCard() {
+      const card = document.createElement("article");
+      card.className = "car";
+      card.innerHTML = `
+        <header>
+          <strong>Automobilis</strong>
+          <button class="ghost" type="button" data-remove>Pašalinti</button>
+        </header>
+        <div class="grid">
+          <label class="wide">Pavadinimas
+            <input name="pavadinimas" required placeholder="VW Golf VII 2014">
+          </label>
+          <label class="wide">Ovoko automobilio ID
+            <input name="car_id" inputmode="numeric" placeholder="jei automobilis jau yra Ovoko">
+          </label>
+        </div>
+        <details>
+          <summary>Šio automobilio Ovoko dar nėra</summary>
+          <div class="grid" style="margin-top:12px">
+            <label>Modelio ID
+              <input name="car_model" inputmode="numeric">
+            </label>
+            <label>Metai
+              <input name="car_years" placeholder="2014">
+            </label>
+            <label>Automobilio būsenos ID
+              <input name="car_status" inputmode="numeric">
+            </label>
+          </div>
+        </details>
+      `;
+      card.querySelector("[data-remove]").addEventListener("click", () => {
+        if (cars.children.length === 1) return;
+        card.remove();
+        refresh();
+      });
+      card.addEventListener("input", refresh);
+      return card;
+    }
+
+    function refresh() {
+      const count = cars.children.length;
+      [...cars.children].forEach((card, index) => {
+        card.querySelector("strong").textContent = `Automobilis ${index + 1}`;
+      });
+      const names = [...cars.querySelectorAll("[name=pavadinimas]")]
+        .map((input) => input.value.trim())
+        .filter(Boolean);
+      const listed = names.length ? `: ${names.join(", ")}` : "";
+      preview.textContent = `Bus sukurti ${count} skelbimai${listed}.`;
+    }
+
+    document.querySelector("#prideti").addEventListener("click", () => {
+      cars.append(carCard());
+      refresh();
+    });
+
+    cars.append(carCard());
+    cars.append(carCard());
+    refresh();
+
+    fetch("/api/busena")
+      .then((response) => response.json())
+      .then((data) => {
+        const phone = (data.telefono_adresai || []).join(" arba ");
+        const phoneLine = phone ? ` Telefone atidaryk ${phone}` : "";
+        if (data.prijungta) {
+          banner.className = "banner result ok";
+          banner.textContent = `Ovoko prisijungimas įrašytas. Sukūrus skelbimus jie bus iškart įkelti.${phoneLine}`;
+          return;
+        }
+        banner.textContent = `Ovoko rakto dar nėra, todėl skelbimai ir nuotraukos bus paruošti šiame kompiuteryje.${phoneLine}`;
+      })
+      .catch(() => {
+        banner.textContent = "Nepavyko patikrinti prisijungimo.";
+      });
+
+    document.querySelector("#forma").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = new FormData(form);
+      const photos = [...codePicked, ...picked];
+      const optionalCodes = [...form.querySelectorAll("[name=extra_code]")]
+        .map((input) => input.value.trim())
+        .filter(Boolean);
+      const payload = {
+        detale: {
+          category_id: data.get("category_id"),
+          quality: data.get("quality"),
+          status: data.get("status"),
+          position: data.get("position"),
+          price: data.get("price"),
+          original_currency: data.get("original_currency"),
+          manufacturer_code: data.get("manufacturer_code"),
+          optional_codes: optionalCodes,
+          notes: data.get("notes"),
+          internal_notes: data.get("internal_notes"),
+          sticker_note: data.get("sticker_note"),
+          english: data.get("english"),
+          photo: photos[0] || "",
+          photos
+        },
+        matmenys: {
+          svoris: data.get("svoris"),
+          ilgis: data.get("ilgis"),
+          plotis: data.get("plotis"),
+          aukstis: data.get("aukstis")
+        },
+        automobiliai: [...cars.querySelectorAll(".car")].map((card) => ({
+          pavadinimas: card.querySelector("[name=pavadinimas]").value,
+          car_id: card.querySelector("[name=car_id]").value,
+          car_model: card.querySelector("[name=car_model]").value,
+          car_years: card.querySelector("[name=car_years]").value,
+          status: card.querySelector("[name=car_status]").value
+        }))
+      };
+      result.className = "result";
+      result.textContent = "Kuriami skelbimai...";
+      const response = await fetch("/api/skelbimai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const answer = await response.json();
+      if (!response.ok) {
+        result.textContent = answer.klaida || "Nepavyko sukurti skelbimų.";
+        return;
+      }
+      result.className = "result ok";
+      const items = answer.skelbimai.map((item) => {
+        const id = item.part_id ? `, Ovoko part_id ${item.part_id}` : "";
+        return `<li>${item.pavadinimas}${id}</li>`;
+      }).join("");
+      result.innerHTML = `<strong>${answer.zinute}</strong><ul>${items}</ul>`;
+    });
+  </script>
+</body>
+</html>
