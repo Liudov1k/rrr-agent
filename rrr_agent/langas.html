@@ -36,6 +36,7 @@
     }
     .result { margin-top: 14px; }
     .result.ok { background: #e8f6ef; color: #0a5537; }
+    .result.bad { background: #fde8e8; color: #9f1239; }
     form { display: grid; gap: 14px; }
     section, .car {
       background: var(--card);
@@ -106,6 +107,37 @@
     .ghost-label i { color: #e11d48; font-style: normal; }
     .cat input:focus + .ghost-label,
     .cat input:not(:placeholder-shown) + .ghost-label { display: none; }
+    .cat-list {
+      position: absolute;
+      z-index: 6;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      max-height: 320px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid var(--field);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+    }
+    .cat-list[hidden] { display: none; }
+    .cat-list button {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 10px 12px;
+      border: 0;
+      border-radius: 0;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-weight: 450;
+      text-align: left;
+      cursor: pointer;
+    }
+    .cat-list button:hover,
+    .cat-list button:focus { background: #f3f6fa; }
+    .cat-list p { margin: 0; padding: 10px 12px; color: #667085; }
     .boxed {
       display: flex;
       flex-direction: column;
@@ -140,7 +172,9 @@
       font-weight: 650;
       cursor: pointer;
     }
-    .extra-code { display: grid; }
+    .extra-code { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+    .photo-status { min-height: 1.2em; margin: 8px 0 0; color: #0a5537; font-weight: 650; }
+    .photo-status.warn { color: #8a4b12; }
     .tile {
       width: 168px;
       min-height: 112px;
@@ -232,6 +266,7 @@
           </div>
         </div>
         <div id="kodo-galerija" class="gallery"></div>
+        <p class="photo-status" id="kodo-busena"></p>
       </section>
 
       <section class="card">
@@ -255,6 +290,7 @@
             </div>
           </div>
           <div id="galerija" class="gallery"></div>
+          <p class="photo-status" id="nuotrauku-busena"></p>
         </div>
       </section>
 
@@ -268,22 +304,24 @@
           <div id="papildomi-kodai" class="stack"></div>
           <button class="text-link" type="button" id="prideti-koda">Pridėti kodą</button>
 
-          <div class="cat">
-            <input class="field selectish" name="category_id" inputmode="numeric" required placeholder=" ">
+          <div class="cat" id="kategorija">
+            <input class="field selectish" id="kategorija-paieska" autocomplete="off" required placeholder=" ">
             <span class="ghost-label">Kategorija <i>*</i></span>
+            <input type="hidden" name="category_id" id="kategorija-id">
+            <div class="cat-list" id="kategoriju-sarasas" hidden></div>
           </div>
 
           <div class="pair">
             <label class="boxed">
               <span>Kokybė <i>*</i></span>
-              <select name="quality" required>
+              <select name="quality" id="kokybe" required>
                 <option value="0" selected>Naudota</option>
                 <option value="1">Nauja</option>
                 <option value="3">Su defektais</option>
                 <option value="4">Restauruota</option>
               </select>
             </label>
-            <select class="field selectish" name="position">
+            <select class="field selectish" name="position" id="pozicija">
               <option value="">Dalies pozicija</option>
               <option value="100">Priekyje</option>
               <option value="110">Gale</option>
@@ -302,7 +340,7 @@
           <div class="pair">
             <label class="boxed">
               <span>Vairo pusė</span>
-              <select name="english">
+              <select name="english" id="vairas">
                 <option value="0" selected>Kairė</option>
                 <option value="1">Dešinė</option>
               </select>
@@ -321,6 +359,8 @@
             <textarea class="field" name="internal_notes" placeholder="Vidinės pastabos"></textarea>
           </div>
 
+          <input class="field" name="price" inputmode="decimal" placeholder="Kaina, EUR">
+
           <p class="dims-title">Matmenys</p>
           <div class="dims">
             <input class="field" name="svoris" inputmode="decimal" placeholder="Svoris, kg">
@@ -330,7 +370,7 @@
           </div>
 
           <input type="hidden" name="status" value="0">
-          <input type="hidden" name="price" value="0">
+          <input type="hidden" name="mechanic" value="6">
           <input type="hidden" name="original_currency" value="EUR">
         </div>
       </section>
@@ -340,13 +380,13 @@
           <h2>Automobiliai</h2>
           <button class="ghost" type="button" id="prideti">Pridėti automobilį</button>
         </div>
-        <p class="preview" id="preview">Bus sukurti 2 skelbimai.</p>
+        <p class="preview" id="preview">Kraunami automobiliai...</p>
         <div class="cars" id="automobiliai"></div>
         <p class="hint">Kiekvienas automobilis gaus atskirą skelbimą su tais pačiais dalies duomenimis.</p>
       </section>
 
       <div class="actions">
-        <button class="primary" type="submit">Sukurti skelbimus</button>
+        <button class="primary" type="submit" id="kelti">Kelti</button>
       </div>
     </form>
     <div id="rezultatas"></div>
@@ -360,6 +400,67 @@
     const codeGallery = document.querySelector("#kodo-galerija");
     const picked = [];
     const codePicked = [];
+    const categorySearch = document.querySelector("#kategorija-paieska");
+    const categoryId = document.querySelector("#kategorija-id");
+    const categoryList = document.querySelector("#kategoriju-sarasas");
+
+    function foldText(value) {
+      return value.toLocaleLowerCase("lt").normalize("NFD").replace(/\p{M}/gu, "");
+    }
+
+    function fillChoice(select, items, emptyLabel, selectedId) {
+      const current = selectedId || select.value;
+      select.replaceChildren();
+      if (emptyLabel) {
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = emptyLabel;
+        select.append(empty);
+      }
+      items.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.pavadinimas;
+        select.append(option);
+      });
+      if ([...select.options].some((option) => option.value === current)) select.value = current;
+    }
+
+    function filterCategories() {
+      const query = foldText(categorySearch.value.trim());
+      let visible = 0;
+      categoryList.querySelectorAll("button").forEach((button) => {
+        const matched = !query || button.dataset.fold.includes(query);
+        button.hidden = !matched;
+        if (matched) visible += 1;
+      });
+      const note = categoryList.querySelector("p");
+      if (note) note.hidden = visible > 0;
+      categoryList.hidden = false;
+    }
+
+    function chooseCategory(button) {
+      categoryId.value = button.dataset.id;
+      categorySearch.value = button.textContent;
+      categoryList.hidden = true;
+    }
+
+    categorySearch.addEventListener("focus", filterCategories);
+    categorySearch.addEventListener("input", () => {
+      categoryId.value = "";
+      filterCategories();
+    });
+    categorySearch.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const visible = [...categoryList.querySelectorAll("button")].filter((button) => !button.hidden);
+      if (visible.length !== 1) return;
+      event.preventDefault();
+      chooseCategory(visible[0]);
+    });
+    categoryList.addEventListener("mousedown", (event) => event.preventDefault());
+    document.addEventListener("click", (event) => {
+      if (!document.querySelector("#kategorija").contains(event.target)) categoryList.hidden = true;
+    });
 
     function drawList(list, container, labelFor) {
       container.innerHTML = "";
@@ -408,42 +509,66 @@
       }
     }
 
-    async function uploadPhotos(fileList, target, limit) {
+    function photoStatus(container, text, failed) {
+      const status = container.parentElement.querySelector(".photo-status");
+      if (!status) return;
+      status.textContent = text;
+      status.classList.toggle("warn", Boolean(failed));
+    }
+
+    function dropBlobPhotos(target) {
+      for (let index = target.length - 1; index >= 0; index -= 1) {
+        if (String(target[index]).startsWith("blob:")) {
+          URL.revokeObjectURL(target[index]);
+          target.splice(index, 1);
+        }
+      }
+    }
+
+    async function uploadPhotos(fileList, target, limit, container) {
       const files = [...fileList].slice(0, limit);
       if (!files.length) return;
-      result.className = "result";
-      for (let index = 0; index < files.length; index += 1) {
-        result.textContent = `Keliama nuotrauka ${index + 1} iš ${files.length}...`;
-        const prepared = await preparePhoto(files[index]);
-        const body = new FormData();
-        body.append("nuotrauka", prepared);
-        const response = await fetch("/api/nuotraukos", { method: "POST", body });
-        const answer = await response.json();
-        if (!response.ok) {
-          result.textContent = answer.klaida || "Nuotraukos įkelti nepavyko.";
-          return;
-        }
-        if (limit === 1) target.splice(0, target.length, answer.nuotraukos[0]);
-        else target.push(...answer.nuotraukos);
-      }
-      result.textContent = "";
-      result.className = "";
+      const previews = files.map((file) => URL.createObjectURL(file));
+      const start = limit === 1 ? 0 : target.length;
+      if (limit === 1) target.splice(0, target.length, ...previews);
+      else target.push(...previews);
       drawAll();
+      photoStatus(container, "Keliama nuotrauka...");
+      try {
+        for (let index = 0; index < files.length; index += 1) {
+          const prepared = await preparePhoto(files[index]);
+          const body = new FormData();
+          body.append("nuotrauka", prepared);
+          const response = await fetch("/api/nuotraukos", { method: "POST", body });
+          const answer = await response.json();
+          if (!response.ok) throw new Error(answer.klaida || "Nuotraukos įkelti nepavyko.");
+          const slot = start + index;
+          if (String(target[slot]).startsWith("blob:")) URL.revokeObjectURL(target[slot]);
+          target[slot] = answer.nuotraukos[0];
+          drawAll();
+        }
+        const count = target.length;
+        photoStatus(container, limit === 1 ? "Kodo nuotrauka pridėta." : `Pridėta nuotraukų: ${count}.`);
+      } catch (error) {
+        dropBlobPhotos(target);
+        drawAll();
+        photoStatus(container, error.message || "Nuotraukos įkelti nepavyko.", true);
+      }
     }
 
     document.querySelectorAll(".kodo-nuotrauka").forEach((input) => {
       input.addEventListener("change", async (event) => {
-        const files = event.target.files;
+        const files = [...event.target.files];
         event.target.value = "";
-        await uploadPhotos(files, codePicked, 1);
+        await uploadPhotos(files, codePicked, 1, codeGallery);
       });
     });
 
     document.querySelectorAll(".nuotrauka").forEach((input) => {
       input.addEventListener("change", async (event) => {
-        const files = event.target.files;
+        const files = [...event.target.files];
         event.target.value = "";
-        await uploadPhotos(files, picked, 12);
+        await uploadPhotos(files, picked, 12, gallery);
       });
     });
 
@@ -454,9 +579,15 @@
       input.className = "field";
       input.name = "extra_code";
       input.placeholder = "Papildomas kodas";
-      row.append(input);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ghost";
+      remove.textContent = "Šalinti";
+      remove.addEventListener("click", () => row.remove());
+      row.append(input, remove);
       document.querySelector("#papildomi-kodai").append(row);
       input.focus();
+      row.scrollIntoView({ block: "center" });
     });
 
     const sticker = document.querySelector("[name=sticker_note]");
@@ -471,20 +602,41 @@
       });
     });
 
-    function carCard() {
+    let catalog = [];
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"]/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;"
+      }[char]));
+    }
+
+    function carCard(selected) {
       const card = document.createElement("article");
       card.className = "car";
+      const options = catalog.map((car) => {
+        const picked = selected && selected.id === car.id ? " selected" : "";
+        return `<option value="${escapeHtml(car.id)}"${picked}>${escapeHtml(car.pavadinimas)}</option>`;
+      }).join("");
       card.innerHTML = `
         <header>
           <strong>Automobilis</strong>
           <button class="ghost" type="button" data-remove>Pašalinti</button>
         </header>
         <div class="grid">
+          <label class="wide">Automobilis
+            <select name="pasirinkimas">
+              <option value="">Pasirink arba pataisyk žemiau</option>
+              ${options}
+            </select>
+          </label>
           <label class="wide">Pavadinimas
-            <input name="pavadinimas" required placeholder="VW Golf VII 2014">
+            <input name="pavadinimas" required placeholder="Land Rover Defender 1997" value="${selected ? escapeHtml(selected.pavadinimas) : ""}">
           </label>
           <label class="wide">Ovoko automobilio ID
-            <input name="car_id" inputmode="numeric" placeholder="jei automobilis jau yra Ovoko">
+            <input name="car_id" inputmode="numeric" placeholder="jei automobilis jau yra Ovoko" value="${selected ? escapeHtml(selected.id) : ""}">
           </label>
         </div>
         <details>
@@ -502,6 +654,18 @@
           </div>
         </details>
       `;
+      const choice = card.querySelector("[name=pasirinkimas]");
+      choice.addEventListener("change", () => {
+        const car = catalog.find((item) => item.id === choice.value);
+        if (!car) return;
+        card.querySelector("[name=pavadinimas]").value = car.pavadinimas;
+        card.querySelector("[name=car_id]").value = car.id;
+        refresh();
+      });
+      card.querySelector("[name=car_id]").addEventListener("input", () => {
+        const match = catalog.find((item) => item.id === card.querySelector("[name=car_id]").value.trim());
+        choice.value = match ? match.id : "";
+      });
       card.querySelector("[data-remove]").addEventListener("click", () => {
         if (cars.children.length === 1) return;
         card.remove();
@@ -528,9 +692,28 @@
       refresh();
     });
 
-    cars.append(carCard());
-    cars.append(carCard());
-    refresh();
+    fetch("/api/automobiliai")
+      .then((response) => response.json())
+      .then((data) => {
+        catalog = data.automobiliai || [];
+        const defaults = (data.numatytieji || [])
+          .map((id) => catalog.find((car) => car.id === id))
+          .filter(Boolean);
+        const chosen = defaults.length ? defaults : catalog.slice(0, 3);
+        if (chosen.length) chosen.forEach((car) => cars.append(carCard(car)));
+        else {
+          cars.append(carCard());
+          cars.append(carCard());
+          cars.append(carCard());
+        }
+        refresh();
+      })
+      .catch(() => {
+        cars.append(carCard());
+        cars.append(carCard());
+        cars.append(carCard());
+        refresh();
+      });
 
     fetch("/api/busena")
       .then((response) => response.json())
@@ -548,11 +731,52 @@
         banner.textContent = "Nepavyko patikrinti prisijungimo.";
       });
 
+    fetch("/api/sarasai")
+      .then((response) => response.json())
+      .then((data) => {
+        const categories = data.kategorijos || [];
+        categoryList.replaceChildren();
+        if (!categories.length) {
+          const note = document.createElement("p");
+          note.textContent = "Kategorijų sąrašo nepavyko gauti.";
+          categoryList.append(note);
+          return;
+        }
+        categories.forEach((item) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.id = item.id;
+          button.dataset.fold = foldText(item.pavadinimas);
+          button.textContent = item.pavadinimas;
+          button.addEventListener("click", () => chooseCategory(button));
+          categoryList.append(button);
+        });
+        if (data.kokybe?.length) fillChoice(document.querySelector("#kokybe"), data.kokybe, "", "0");
+        if (data.pozicijos?.length) fillChoice(document.querySelector("#pozicija"), data.pozicijos, "Dalies pozicija", "");
+        if (data.vairas?.length) fillChoice(document.querySelector("#vairas"), data.vairas, "", "0");
+      })
+      .catch(() => {
+        categoryList.replaceChildren();
+        const note = document.createElement("p");
+        note.textContent = "Kategorijų sąrašo nepavyko gauti.";
+        categoryList.append(note);
+      });
+
     document.querySelector("#forma").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
+      if (!categoryId.value) {
+        categorySearch.setCustomValidity("Pasirink kategoriją iš sąrašo.");
+        categorySearch.reportValidity();
+        categorySearch.focus();
+        filterCategories();
+        return;
+      }
+      categorySearch.setCustomValidity("");
       const data = new FormData(form);
-      const photos = [...codePicked, ...picked];
+      const photos = [...codePicked, ...picked].filter((url) => (
+        url.startsWith("/nuotraukos/") || url.startsWith("http://") || url.startsWith("https://")
+      ));
       const optionalCodes = [...form.querySelectorAll("[name=extra_code]")]
         .map((input) => input.value.trim())
         .filter(Boolean);
@@ -561,6 +785,7 @@
           category_id: data.get("category_id"),
           quality: data.get("quality"),
           status: data.get("status"),
+          mechanic: data.get("mechanic") || "6",
           position: data.get("position"),
           price: data.get("price"),
           original_currency: data.get("original_currency"),
@@ -589,23 +814,60 @@
       };
       result.className = "result";
       result.textContent = "Kuriami skelbimai...";
-      const response = await fetch("/api/skelbimai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const answer = await response.json();
-      if (!response.ok) {
-        result.textContent = answer.klaida || "Nepavyko sukurti skelbimų.";
+      let answer;
+      try {
+        const response = await fetch("/api/skelbimai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        answer = await response.json();
+        if (!response.ok) {
+          result.className = "result bad";
+          result.textContent = answer.klaida || "Nepavyko sukurti skelbimų.";
+          result.scrollIntoView({ block: "nearest" });
+          return;
+        }
+      } catch (error) {
+        result.className = "result bad";
+        result.textContent = "Serveris neatsakė. Bandyk dar kartą.";
+        result.scrollIntoView({ block: "nearest" });
         return;
       }
       result.className = "result ok";
       const items = answer.skelbimai.map((item) => {
         const id = item.part_id ? `, Ovoko part_id ${item.part_id}` : "";
-        return `<li>${item.pavadinimas}${id}</li>`;
+        const note = item.perspejimas ? `. ${item.perspejimas}` : "";
+        return `<li>${item.pavadinimas}${id}${note}</li>`;
       }).join("");
       result.innerHTML = `<strong>${answer.zinute}</strong><ul>${items}</ul>`;
+      resetPartForm(form);
+      result.scrollIntoView({ block: "start" });
     });
+
+    const defaultNotes = document.querySelector("[name=notes]").value;
+
+    function resetPartForm(form) {
+      codePicked.splice(0, codePicked.length);
+      picked.splice(0, picked.length);
+      drawAll();
+      document.querySelector("#kodo-busena").textContent = "";
+      document.querySelector("#nuotrauku-busena").textContent = "";
+      form.querySelector("[name=manufacturer_code]").value = "";
+      document.querySelector("#papildomi-kodai").replaceChildren();
+      categorySearch.value = "";
+      categoryId.value = "";
+      form.querySelector("[name=sticker_note]").value = "";
+      stickerCount.textContent = "0/32";
+      form.querySelector("[name=notes]").value = defaultNotes;
+      form.querySelector("[name=internal_notes]").value = "";
+      ["price", "svoris", "ilgis", "plotis", "aukstis"].forEach((name) => {
+        form.querySelector(`[name=${name}]`).value = "";
+      });
+      form.querySelector("#pozicija").value = "";
+      form.querySelector("#kokybe").value = "0";
+      form.querySelector("#vairas").value = "0";
+    }
   </script>
 </body>
 </html>

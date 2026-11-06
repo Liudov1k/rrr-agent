@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from rrr_agent.client import RrrApiError, RrrClient
 from rrr_agent.config import Settings, project_root
+from rrr_agent.nuotraukos import resolve_photo
 from rrr_agent.preke import car_payload, check_draft, load_draft, part_payload, save_draft
+from rrr_agent.viesos import temporary_public_base
 
 _TRANSLIT = str.maketrans(
     {
@@ -99,6 +102,7 @@ def _part_fields(raw: dict[str, Any]) -> dict[str, Any]:
         "category_id": _integer(raw.get("category_id"), "Kategorija"),
         "quality": _integer(raw.get("quality"), "Kokybė"),
         "status": _integer(raw.get("status"), "Būsena"),
+        "mechanic": _integer(raw.get("mechanic"), "Įrašo būsena"),
         "position": _integer(raw.get("position"), "Dalies pozicija"),
         "price": _number(raw.get("price"), "Kaina"),
         "original_currency": _text(raw.get("original_currency")) or "EUR",
@@ -115,32 +119,31 @@ def _part_fields(raw: dict[str, Any]) -> dict[str, Any]:
     }
     if str(raw.get("english")).strip() == "1":
         part["english"] = 1
+    if part.get("mechanic") is None:
+        part["mechanic"] = 6
     return {key: value for key, value in part.items() if not _blank(value)}
 
 
 def _apply_dimensions(part: dict[str, Any], dims: Any) -> dict[str, Any]:
     if not isinstance(dims, dict):
         return part
-    labels = (
-        ("svoris", "svoris", "kg"),
-        ("ilgis", "ilgis", "cm"),
-        ("plotis", "plotis", "cm"),
-        ("aukstis", "aukštis", "cm"),
+    fields = (
+        ("svoris", "weight", "Svoris"),
+        ("ilgis", "length", "Ilgis"),
+        ("plotis", "width", "Plotis"),
+        ("aukstis", "height", "Aukštis"),
     )
-    pieces: list[str] = []
     clean: dict[str, str] = {}
-    for key, label, unit in labels:
-        value = _text(dims.get(key)).replace(",", ".")
-        if not value:
+    for key, field, label in fields:
+        number = _number(dims.get(key), label)
+        if number is None:
             continue
-        clean[key] = value
-        pieces.append(f"{label} {value} {unit}")
-    if not pieces:
-        return part
-    line = "Matmenys: " + ", ".join(pieces) + "."
-    notes = part.get("internal_notes") or ""
-    part["internal_notes"] = f"{notes}\n{line}".strip() if notes else line
-    part["_matmenys"] = clean
+        if number < 0:
+            raise ValueError(f"{label} negali būti neigiamas.")
+        part[field] = number
+        clean[key] = str(number)
+    if clean:
+        part["_matmenys"] = clean
     return part
 
 
@@ -218,6 +221,53 @@ def save_drafts(drafts: list[dict[str, Any]], root: Path | None = None) -> list[
     return saved
 
 
+def _ovoko_warning(message: str) -> str:
+    text = message.lower()
+    if "photo" in text or "nuotrauk" in text:
+        return "Ovoko skelbimo parduotuvėje nerodys, kol nebus nuotraukos."
+    cleaned = message.strip()
+    return cleaned or "Ovoko priėmė skelbimą su perspėjimu."
+
+
+def _photo_urls(part: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    if part.get("photo"):
+        urls.append(str(part["photo"]))
+    urls.extend(str(item) for item in part.get("photos") or [])
+    return urls
+
+
+def local_photo_files(drafts: list[dict[str, Any]]) -> dict[str, Path]:
+    files: dict[str, Path] = {}
+    for draft in drafts:
+        for url in _photo_urls(draft.get("detale") or {}):
+            if url.startswith("/nuotraukos/"):
+                path = resolve_photo(url)
+                files[path.name] = path
+    return files
+
+
+def apply_public_photos(draft: dict[str, Any], base: str) -> None:
+    part = draft.get("detale") or {}
+
+    def one(url: str) -> str:
+        if url.startswith("/nuotraukos/"):
+            return f"{base.rstrip('/')}/{Path(url).name}"
+        return url
+
+    if part.get("photo"):
+        part["photo"] = one(str(part["photo"]))
+    if part.get("photos"):
+        part["photos"] = [one(str(item)) for item in part["photos"]]
+
+
+def _existing_part_id(exc: RrrApiError) -> Any:
+    payload = exc.payload if isinstance(exc.payload, dict) else {}
+    if exc.status_code == "R400" and payload.get("part_id") and "exist" in str(exc).lower():
+        return payload["part_id"]
+    return None
+
+
 def upload_draft(path: Path, client: RrrClient) -> dict[str, Any]:
     draft = load_draft(path)
     errors, _warnings = check_draft(draft)
@@ -233,25 +283,52 @@ def upload_draft(path: Path, client: RrrClient) -> dict[str, Any]:
     if draft.get("detale", {}).get("ovoko_id"):
         return {"part_id": draft["detale"]["ovoko_id"], "jau_buvo": True}
 
-    created_part = client.post("/crm/importPart", part_payload(draft))
+    payload = part_payload(draft)
+    updated = False
+    try:
+        created_part = client.post("/crm/importPart", payload)
+    except RrrApiError as exc:
+        part_id = _existing_part_id(exc)
+        if part_id is None:
+            raise
+        created_part = client.post("/crm/updatePart", {**payload, "part_id": part_id})
+        created_part["part_id"] = part_id
+        updated = True
     part_id = created_part.get("part_id")
     draft.setdefault("detale", {})["ovoko_id"] = part_id
     save_draft(path, draft)
     car_id = draft.get("detale", {}).get("car_id") or draft.get("automobilis", {}).get("ovoko_id")
-    return {"part_id": part_id, "car_id": car_id}
+    result: dict[str, Any] = {"part_id": part_id, "car_id": car_id}
+    if updated:
+        result["atnaujinta"] = True
+    if str(created_part.get("status_code")) == "R202":
+        result["perspejimas"] = _ovoko_warning(str(created_part.get("msg") or ""))
+    return result
 
 
-def _require_public_photos(draft: dict[str, Any]) -> None:
-    part = draft.get("detale") or {}
-    photos = []
-    if part.get("photo"):
-        photos.append(str(part["photo"]))
-    photos.extend(str(item) for item in part.get("photos") or [])
-    if any(url.startswith("/nuotraukos/") for url in photos):
-        raise ValueError(
-            "Telefono nuotrauka išsaugota kompiuteryje, bet Ovoko jos iš namų Wi-Fi atsisiųsti negali. "
-            "Skelbimas paruoštas, į Ovoko su šia nuotrauka dar neiškeltas."
-        )
+def _photos_copied(client: RrrClient, part_id: Any) -> bool:
+    try:
+        data = client.post(f"/get/part/{part_id}")
+    except RrrApiError:
+        return False
+    rows = data.get("list") or []
+    while rows and isinstance(rows[0], list):
+        rows = rows[0]
+    if not rows or not isinstance(rows[0], dict):
+        return False
+    photo = str(rows[0].get("photo") or "")
+    return photo.startswith("https://images.ovoko.com/")
+
+
+def _wait_until_photos_copied(client: RrrClient, uploaded: list[dict[str, Any]]) -> None:
+    pending = [item for item in uploaded if item.get("part_id")]
+    deadline = time.time() + 25
+    while pending and time.time() < deadline:
+        pending = [item for item in pending if not _photos_copied(client, item["part_id"])]
+        if pending:
+            time.sleep(2)
+    for item in pending:
+        item["perspejimas"] = "Nuotrauka į Ovoko dar nepersikopijavo. Patikrink skelbimą po minutės."
 
 
 def publish(payload: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -262,9 +339,6 @@ def publish(payload: dict[str, Any], settings: Settings) -> dict[str, Any]:
         "skelbimai": saved,
     }
     missing = settings.missing()
-    if not missing:
-        for draft in drafts:
-            _require_public_photos(draft)
     if missing:
         result["rezimas"] = "juodrastis"
         result["zinute"] = (
@@ -274,10 +348,17 @@ def publish(payload: dict[str, Any], settings: Settings) -> dict[str, Any]:
         return result
 
     client = RrrClient(settings)
-    uploaded = []
-    for item in saved:
-        created = upload_draft(Path(item["failas"]), client)
-        uploaded.append({**item, **created})
+    with temporary_public_base(local_photo_files(drafts)) as base:
+        if base:
+            for draft, item in zip(drafts, saved):
+                apply_public_photos(draft, base)
+                save_draft(Path(item["failas"]), draft)
+        uploaded = []
+        for item in saved:
+            created = upload_draft(Path(item["failas"]), client)
+            uploaded.append({**item, **created})
+        if base:
+            _wait_until_photos_copied(client, uploaded)
     result["rezimas"] = "ovoko"
     result["skelbimai"] = uploaded
     result["zinute"] = f"Į Ovoko įkelta skelbimų: {len(uploaded)}."

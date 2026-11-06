@@ -62,6 +62,7 @@ class RrrClient:
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0",
             },
         )
         try:
@@ -82,7 +83,8 @@ class RrrClient:
             raise RrrApiError("Ovoko atsakymas neturi laukų.", payload=parsed)
 
         status_code = str(parsed.get("status_code", ""))
-        if status_code != "R200":
+        created = status_code == "R200" or (status_code == "R202" and parsed.get("part_id"))
+        if not created:
             message = str(parsed.get("msg") or "Ovoko grąžino klaidą")
             raise RrrApiError(message, status_code or None, parsed)
         return parsed
