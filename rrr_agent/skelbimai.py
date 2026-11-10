@@ -11,7 +11,7 @@ from rrr_agent.client import RrrApiError, RrrClient
 from rrr_agent.config import Settings, project_root
 from rrr_agent.nuotraukos import resolve_photo
 from rrr_agent.preke import car_payload, check_draft, load_draft, part_payload, save_draft
-from rrr_agent.viesos import temporary_public_base
+from rrr_agent.viesos import ensure_photo_base
 
 _TRANSLIT = str.maketrans(
     {
@@ -301,13 +301,9 @@ def upload_draft(path: Path, client: RrrClient) -> dict[str, Any]:
                 created_part["part_id"] = part_id
                 updated = True
                 break
-            if _photo_not_ready(exc) and attempt < 3:
-                time.sleep(5)
+            if _photo_not_ready(exc) and attempt < 2:
+                time.sleep(2)
                 continue
-            if _photo_not_ready(exc):
-                raise RrrApiError(
-                    "Ovoko dar nepasiekė nuotraukos. Palauk kelias sekundes ir spausk Kelti dar kartą."
-                ) from exc
             raise
     if created_part is None:
         raise RrrApiError("Ovoko negrąžino skelbimo numerio.")
@@ -321,31 +317,6 @@ def upload_draft(path: Path, client: RrrClient) -> dict[str, Any]:
     if str(created_part.get("status_code")) == "R202":
         result["perspejimas"] = _ovoko_warning(str(created_part.get("msg") or ""))
     return result
-
-
-def _photos_copied(client: RrrClient, part_id: Any) -> bool:
-    try:
-        data = client.post(f"/get/part/{part_id}")
-    except RrrApiError:
-        return False
-    rows = data.get("list") or []
-    while rows and isinstance(rows[0], list):
-        rows = rows[0]
-    if not rows or not isinstance(rows[0], dict):
-        return False
-    photo = str(rows[0].get("photo") or "")
-    return photo.startswith("https://images.ovoko.com/")
-
-
-def _wait_until_photos_copied(client: RrrClient, uploaded: list[dict[str, Any]]) -> None:
-    pending = [item for item in uploaded if item.get("part_id")]
-    deadline = time.time() + 25
-    while pending and time.time() < deadline:
-        pending = [item for item in pending if not _photos_copied(client, item["part_id"])]
-        if pending:
-            time.sleep(2)
-    for item in pending:
-        item["perspejimas"] = "Nuotrauka į Ovoko dar nepersikopijavo. Patikrink skelbimą po minutės."
 
 
 def publish(payload: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -365,17 +336,15 @@ def publish(payload: dict[str, Any], settings: Settings) -> dict[str, Any]:
         return result
 
     client = RrrClient(settings)
-    with temporary_public_base(local_photo_files(drafts)) as base:
-        if base:
-            for draft, item in zip(drafts, saved):
-                apply_public_photos(draft, base)
-                save_draft(Path(item["failas"]), draft)
-        uploaded = []
-        for item in saved:
-            created = upload_draft(Path(item["failas"]), client)
-            uploaded.append({**item, **created})
-        if base:
-            _wait_until_photos_copied(client, uploaded)
+    uploaded: list[dict[str, Any]] = []
+    if local_photo_files(drafts):
+        base = ensure_photo_base()
+        for draft, item in zip(drafts, saved):
+            apply_public_photos(draft, base)
+            save_draft(Path(item["failas"]), draft)
+    for item in saved:
+        created = upload_draft(Path(item["failas"]), client)
+        uploaded.append({**item, **created})
     result["rezimas"] = "ovoko"
     result["skelbimai"] = uploaded
     result["zinute"] = f"Į Ovoko įkelta skelbimų: {len(uploaded)}."

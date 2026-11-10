@@ -683,6 +683,10 @@
       const names = [...cars.querySelectorAll("[name=pavadinimas]")]
         .map((input) => input.value.trim())
         .filter(Boolean);
+      const ids = [...cars.querySelectorAll("[name=car_id]")]
+        .map((input) => input.value.trim())
+        .filter(Boolean);
+      if (ids.length) localStorage.setItem("rrr-automobiliai", JSON.stringify(ids));
       const listed = names.length ? `: ${names.join(", ")}` : "";
       preview.textContent = `Bus sukurti ${count} skelbimai${listed}.`;
     }
@@ -696,10 +700,18 @@
       .then((response) => response.json())
       .then((data) => {
         catalog = data.automobiliai || [];
-        const defaults = (data.numatytieji || [])
-          .map((id) => catalog.find((car) => car.id === id))
+        const pinned = ["4", "15", "18"];
+        let remembered = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem("rrr-automobiliai") || "null");
+          if (Array.isArray(raw) && raw.length) remembered = raw.map(String);
+        } catch {
+          remembered = [];
+        }
+        const source = remembered.length ? remembered : pinned;
+        const chosen = source
+          .map((id) => catalog.find((item) => item.id === id))
           .filter(Boolean);
-        const chosen = defaults.length ? defaults : catalog.slice(0, 3);
         if (chosen.length) chosen.forEach((car) => cars.append(carCard(car)));
         else {
           cars.append(carCard());

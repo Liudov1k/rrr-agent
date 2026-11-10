@@ -11,37 +11,50 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib import request
 
-from rrr_agent.nuotraukos import content_type
+from rrr_agent.client import fetch_https
+from rrr_agent.nuotraukos import content_type, photos_dir
 
 _URL = re.compile(r"https://[A-Za-z0-9.-]+\.(?:localhost\.run|lhr\.life|trycloudflare\.com)")
+_PROBE = b"\xff\xd8\xff\xd9"
+_bridge_lock = threading.Lock()
+_bridge: dict[str, object] = {"base": "", "proc": None}
 
 
-def _photo_handler(files: dict[str, Path], hits: list[str]) -> type[BaseHTTPRequestHandler]:
+def _photo_handler(files: dict[str, Path] | None = None, hits: list[str] | None = None) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        def _file(self) -> Path | None:
+        def _file(self) -> Path | bytes | None:
             name = Path(self.path.split("?", 1)[0]).name
-            path = files.get(name)
+            if name == "probe.jpg":
+                return _PROBE
+            path = files.get(name) if files is not None else None
+            if path is None and files is None:
+                root = photos_dir().resolve()
+                candidate = (root / name).resolve()
+                if root in candidate.parents and candidate.is_file() and candidate.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                    path = candidate
             if path is None or not path.is_file():
-                hits.append(f"{self.command} {self.path} missing")
+                if hits is not None:
+                    hits.append(f"{self.command} {self.path} missing")
                 return None
             return path
 
         def _send(self, include_body: bool) -> None:
-            path = self._file()
-            if path is None:
+            found = self._file()
+            if found is None:
                 self.send_error(404)
                 return
-            data = path.read_bytes()
+            data = found if isinstance(found, bytes) else found.read_bytes()
+            kind = "image/jpeg" if isinstance(found, bytes) else content_type(found)
             self.send_response(200)
-            self.send_header("Content-Type", content_type(path))
+            self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             if include_body:
                 self.wfile.write(data)
-            hits.append(f"{self.command} {self.path} 200")
+            if hits is not None:
+                hits.append(f"{self.command} {self.path} 200")
 
         def do_HEAD(self) -> None:
             self._send(False)
@@ -77,8 +90,6 @@ def _wait_for_url(proc: subprocess.Popen[str], timeout: float) -> str:
             if not piece:
                 return
             chunks.append(piece)
-            if _URL.search("".join(chunks)):
-                return
 
     thread = threading.Thread(target=read, daemon=True)
     thread.start()
@@ -107,7 +118,15 @@ def _open_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
     cloudflared = _cloudflared_path()
     ssh = shutil.which("ssh")
     if cloudflared:
-        command = [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{port}", "--no-autoupdate"]
+        command = [
+            cloudflared,
+            "--edge-ip-version",
+            "4",
+            "tunnel",
+            "--url",
+            f"http://127.0.0.1:{port}",
+            "--no-autoupdate",
+        ]
     elif ssh:
         command = [
             ssh,
@@ -137,24 +156,48 @@ def _open_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
         raise
 
 
-def _wait_until_fetchable(base: str, files: dict[str, Path]) -> None:
-    name = next(iter(files))
-    url = f"{base.rstrip('/')}/{name}"
-    deadline = time.time() + 30
-    last_error = "nuotrauka dar nepasiekiama"
+def _probe_ready(base: str) -> bool:
+    try:
+        status, data = fetch_https(f"{base.rstrip('/')}/probe.jpg", timeout=8, limit=3)
+    except Exception:
+        return False
+    return status == 200 and data.startswith(b"\xff\xd8")
+
+
+def _wait_until_fetchable(base: str, seconds: float = 45) -> None:
+    deadline = time.time() + seconds
     while time.time() < deadline:
-        try:
-            http_request = request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with request.urlopen(http_request, timeout=10) as response:
-                data = response.read(3)
-            if data[:3] in {b"\xff\xd8\xff", b"\x89PN", b"RIF"}:
-                time.sleep(8)
-                return
-            last_error = "adresas grąžino ne nuotrauką"
-        except Exception as exc:
-            last_error = str(exc)
-        time.sleep(2)
-    raise ValueError(f"Ovoko nepasiekė nuotraukos. {last_error}")
+        if _probe_ready(base):
+            return
+        time.sleep(1)
+    raise ValueError("Nuotraukos adresas dar nepasiekiamas. Palauk kelias sekundes ir spausk Kelti dar kartą.")
+
+
+def ensure_photo_base() -> str:
+    """Vienas nuotraukų ryšys visam langui, kad kiekviena kita prekė nekeltų jo iš naujo."""
+    with _bridge_lock:
+        proc = _bridge.get("proc")
+        base = str(_bridge.get("base") or "")
+        alive = base and isinstance(proc, subprocess.Popen) and proc.poll() is None
+        if not alive:
+            if isinstance(proc, subprocess.Popen):
+                _stop(proc)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _photo_handler())
+            port = int(server.server_address[1])
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                opened, ready = _open_tunnel(port)
+            except Exception:
+                server.shutdown()
+                server.server_close()
+                raise
+            _bridge["base"] = ready
+            _bridge["proc"] = opened
+            _bridge["server"] = server
+            base = ready
+        if not _probe_ready(base):
+            _wait_until_fetchable(base, 20 if alive else 45)
+        return base
 
 
 def _stop(proc: subprocess.Popen[str] | None) -> None:
@@ -181,7 +224,7 @@ def temporary_public_base(files: dict[str, Path]) -> Iterator[str | None]:
     proc: subprocess.Popen[str] | None = None
     try:
         proc, base = _open_tunnel(port)
-        _wait_until_fetchable(base, files)
+        _wait_until_fetchable(base)
         yield base
     finally:
         _stop(proc)

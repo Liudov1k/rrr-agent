@@ -15,11 +15,12 @@ from rrr_agent.client import RrrApiError, RrrClient
 from rrr_agent.config import Settings, load_settings
 from rrr_agent.nuotraukos import content_type, parse_multipart, resolve_photo, save_image
 from rrr_agent.skelbimai import publish
+from rrr_agent.viesos import ensure_photo_base
 
 PAGE = Path(__file__).with_name("langas.html")
 MAX_PHOTO_REQUEST = 40_000_000
 MODEL_BRANDS = (80, 103)
-DEFAULT_CAR_IDS = ("4", "18", "2")
+DEFAULT_CAR_IDS = ("4", "15", "18")
 _garage_cache: dict[str, object] = {"at": 0.0, "cars": []}
 _choice_cache: dict[str, object] = {"at": 0.0, "choices": None}
 
@@ -206,9 +207,11 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             self._json(400, {"klaida": "Nusiųsk objekto duomenis."})
             return
+        print("Kelti prasidejo", flush=True)
         try:
             result = publish(payload, load_settings())
         except (ValueError, RrrApiError) as exc:
+            print(f"Kelti nepavyko: {exc}", flush=True)
             self._json(400, {"klaida": str(exc)})
             return
         self._json(200, result)
@@ -245,6 +248,15 @@ def lan_addresses() -> list[str]:
     return sorted(ip for ip in addresses if ip and not ip.startswith("127."))
 
 
+def _prepare_photos() -> None:
+    try:
+        ensure_photo_base()
+    except Exception as exc:
+        print(f"Nuotraukų ryšys dar neparuoštas: {exc}")
+        return
+    print("Nuotraukų ryšys paruoštas. Kitos prekės kils greičiau.")
+
+
 def serve(host: str = "0.0.0.0", port: int = 8765, open_browser: bool = True) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Kompiuteryje atidaryta: http://127.0.0.1:{port}/")
@@ -256,6 +268,7 @@ def serve(host: str = "0.0.0.0", port: int = 8765, open_browser: bool = True) ->
     else:
         print("Telefono adreso nematau. Prijunk kompiuterį prie Wi-Fi ir paleisk dar kartą.")
     print("Kol naudoji telefoną, šio lango neuždaryk. Baigęs paspausk Ctrl+C.")
+    threading.Thread(target=_prepare_photos, daemon=True).start()
     if open_browser:
         threading.Timer(0.3, lambda: webbrowser.open(f"http://127.0.0.1:{port}/")).start()
     try:
