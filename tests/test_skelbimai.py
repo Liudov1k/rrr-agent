@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from rrr_agent.client import RrrApiError
 from rrr_agent.preke import load_draft, save_draft
@@ -116,6 +117,38 @@ class ListingsTest(unittest.TestCase):
             self.assertTrue(result["atnaujinta"])
             self.assertEqual(client.calls, ["/crm/importPart", "/crm/updatePart"])
             self.assertEqual(load_draft(path)["detale"]["ovoko_id"], 683)
+
+    def test_missing_photo_is_retried(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def post(self, path, fields=None):
+                if path != "/crm/importPart":
+                    raise AssertionError(path)
+                self.calls += 1
+                if self.calls == 1:
+                    raise RrrApiError("array ( 'photo' => '[ERROR] file does not exist', )", "R400", {})
+                return {"status_code": "R200", "part_id": 10}
+
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "dalis.json"
+            save_draft(
+                path,
+                {
+                    "detale": {
+                        "car_id": 4,
+                        "category_id": 164,
+                        "quality": 0,
+                        "status": 0,
+                        "price": 50,
+                        "photo": "https://example.com/a.jpg",
+                    }
+                },
+            )
+            with patch("rrr_agent.skelbimai.time.sleep"):
+                result = upload_draft(path, FakeClient())
+            self.assertEqual(result["part_id"], 10)
 
     def test_new_car_needs_model_year_and_status(self):
         with self.assertRaises(ValueError):

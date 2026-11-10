@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
 where py >nul 2>&1
 if %errorlevel%==0 (
@@ -9,7 +8,7 @@ if %errorlevel%==0 (
 )
 if errorlevel 1 (
   echo.
-  echo Nepavyko paleisti. Įdiek Python iš python.org ir diegimo metu pažymėk "Add python.exe to PATH".
+  echo Nepavyko paleisti. Idiek Python is python.org ir pazymek "Add python.exe to PATH".
 )
 echo.
 pause

@@ -261,6 +261,10 @@ def apply_public_photos(draft: dict[str, Any], base: str) -> None:
         part["photos"] = [one(str(item)) for item in part["photos"]]
 
 
+def _photo_not_ready(exc: RrrApiError) -> bool:
+    return "file does not exist" in str(exc).lower()
+
+
 def _existing_part_id(exc: RrrApiError) -> Any:
     payload = exc.payload if isinstance(exc.payload, dict) else {}
     if exc.status_code == "R400" and payload.get("part_id") and "exist" in str(exc).lower():
@@ -285,15 +289,28 @@ def upload_draft(path: Path, client: RrrClient) -> dict[str, Any]:
 
     payload = part_payload(draft)
     updated = False
-    try:
-        created_part = client.post("/crm/importPart", payload)
-    except RrrApiError as exc:
-        part_id = _existing_part_id(exc)
-        if part_id is None:
+    created_part: dict[str, Any] | None = None
+    for attempt in range(4):
+        try:
+            created_part = client.post("/crm/importPart", payload)
+            break
+        except RrrApiError as exc:
+            part_id = _existing_part_id(exc)
+            if part_id is not None:
+                created_part = client.post("/crm/updatePart", {**payload, "part_id": part_id})
+                created_part["part_id"] = part_id
+                updated = True
+                break
+            if _photo_not_ready(exc) and attempt < 3:
+                time.sleep(5)
+                continue
+            if _photo_not_ready(exc):
+                raise RrrApiError(
+                    "Ovoko dar nepasiekė nuotraukos. Palauk kelias sekundes ir spausk Kelti dar kartą."
+                ) from exc
             raise
-        created_part = client.post("/crm/updatePart", {**payload, "part_id": part_id})
-        created_part["part_id"] = part_id
-        updated = True
+    if created_part is None:
+        raise RrrApiError("Ovoko negrąžino skelbimo numerio.")
     part_id = created_part.get("part_id")
     draft.setdefault("detale", {})["ovoko_id"] = part_id
     save_draft(path, draft)

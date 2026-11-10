@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib import request
 
 from rrr_agent.nuotraukos import content_type
 
@@ -136,6 +137,26 @@ def _open_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
         raise
 
 
+def _wait_until_fetchable(base: str, files: dict[str, Path]) -> None:
+    name = next(iter(files))
+    url = f"{base.rstrip('/')}/{name}"
+    deadline = time.time() + 30
+    last_error = "nuotrauka dar nepasiekiama"
+    while time.time() < deadline:
+        try:
+            http_request = request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with request.urlopen(http_request, timeout=10) as response:
+                data = response.read(3)
+            if data[:3] in {b"\xff\xd8\xff", b"\x89PN", b"RIF"}:
+                time.sleep(8)
+                return
+            last_error = "adresas grąžino ne nuotrauką"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(2)
+    raise ValueError(f"Ovoko nepasiekė nuotraukos. {last_error}")
+
+
 def _stop(proc: subprocess.Popen[str] | None) -> None:
     if proc is None or proc.poll() is not None:
         return
@@ -160,7 +181,7 @@ def temporary_public_base(files: dict[str, Path]) -> Iterator[str | None]:
     proc: subprocess.Popen[str] | None = None
     try:
         proc, base = _open_tunnel(port)
-        time.sleep(3)
+        _wait_until_fetchable(base, files)
         yield base
     finally:
         _stop(proc)
