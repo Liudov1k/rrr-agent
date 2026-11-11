@@ -7,13 +7,18 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from rrr_agent.client import fetch_https
+from rrr_agent.config import project_root
 from rrr_agent.nuotraukos import content_type, photos_dir
+
+_CLOUDFLARED_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+_cloudflared_lock = threading.Lock()
 
 _URL = re.compile(r"https://[A-Za-z0-9.-]+\.(?:localhost\.run|lhr\.life|trycloudflare\.com)")
 _PROBE = b"\xff\xd8\xff\xd9"
@@ -102,52 +107,54 @@ def _wait_for_url(proc: subprocess.Popen[str], timeout: float) -> str:
         if proc.poll() is not None and not thread.is_alive():
             break
         time.sleep(0.2)
-    text = "".join(chunks).strip()
-    tail = text[-180:] if text else "nėra adreso"
-    raise ValueError(f"Ovoko nepasiekė nuotraukų. {tail}")
+    raise ValueError("Nuotraukų ryšys neatsidarė. Spausk Kelti dar kartą.")
 
 
-def _cloudflared_path() -> str | None:
-    local = Path.home() / "AppData" / "Local" / "rrr-agent" / "cloudflared.exe"
-    if local.is_file():
-        return str(local)
-    return shutil.which("cloudflared")
+def _usable_cloudflared(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 1_000_000
+
+
+def _download_cloudflared(target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".download")
+    request = urllib.request.Request(_CLOUDFLARED_URL, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response, temporary.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+        if not _usable_cloudflared(temporary):
+            raise ValueError("per trumpas failas")
+        temporary.replace(target)
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        raise ValueError("Nepavyko paruošti nuotraukų siuntimo. Patikrink internetą ir spausk Kelti dar kartą.") from exc
+    return target
+
+
+def _cloudflared_path() -> str:
+    with _cloudflared_lock:
+        candidates = [
+            project_root() / "cloudflared.exe",
+            Path.home() / "AppData" / "Local" / "rrr-agent" / "cloudflared.exe",
+        ]
+        for path in candidates:
+            if _usable_cloudflared(path):
+                return str(path)
+        found = shutil.which("cloudflared")
+        if found and _usable_cloudflared(Path(found)):
+            return found
+        return str(_download_cloudflared(candidates[1]))
 
 
 def _open_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
-    cloudflared = _cloudflared_path()
-    ssh = shutil.which("ssh")
-    if cloudflared:
-        command = [
-            cloudflared,
-            "--edge-ip-version",
-            "4",
-            "tunnel",
-            "--url",
-            f"http://127.0.0.1:{port}",
-            "--no-autoupdate",
-        ]
-    elif ssh:
-        command = [
-            ssh,
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
-            "UserKnownHostsFile=NUL",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-o",
-            "ServerAliveInterval=20",
-            "-o",
-            "ConnectTimeout=15",
-            "-o",
-            "BatchMode=yes",
-            "-R",
-            f"80:127.0.0.1:{port}",
-            "nokey@localhost.run",
-        ]
-    else:
-        raise ValueError("Šiame kompiuteryje nėra būdo perduoti nuotrauką Ovoko.")
+    command = [
+        _cloudflared_path(),
+        "--edge-ip-version",
+        "4",
+        "tunnel",
+        "--url",
+        f"http://127.0.0.1:{port}",
+        "--no-autoupdate",
+    ]
     proc = _spawn(command)
     try:
         return proc, _wait_for_url(proc, 40)

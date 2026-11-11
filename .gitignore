@@ -223,4 +223,5 @@ __marimo__/
 node_modules/
 prekes/nuotraukos/
 prekes/partijos/
+cloudflared.exe
 
