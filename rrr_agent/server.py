@@ -317,20 +317,23 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def lan_addresses() -> list[str]:
-    addresses: set[str] = set()
+    """Telefono adresas yra tas, kuriuo šis kompiuteris išeina į internetą."""
     try:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         probe.connect(("8.8.8.8", 80))
-        addresses.add(probe.getsockname()[0])
+        address = probe.getsockname()[0]
         probe.close()
     except OSError:
-        pass
+        address = ""
+    if address and not address.startswith("127.") and not address.startswith("169.254."):
+        return [address]
+    found: set[str] = set()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            addresses.add(info[4][0])
+            found.add(info[4][0])
     except OSError:
         pass
-    return sorted(ip for ip in addresses if ip and not ip.startswith("127."))
+    return sorted(ip for ip in found if ip and not ip.startswith("127.") and not ip.startswith("169.254."))
 
 
 def _prepare_photos() -> None:
