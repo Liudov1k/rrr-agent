@@ -1,14 +1,11 @@
 @echo off
 cd /d "%~dp0"
-if "%~1"=="elevated" goto addrule
-
-netsh advfirewall firewall show rule name="RRR forma" >nul 2>&1
+echo Atidarau kelia telefonui. Jei isoks Windows langas, spausk Taip.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0leisti-telefona.ps1"
 if errorlevel 1 (
-  echo Telefono kelias uzdarytas. Patvirtink Windows langa, kad telefonas galetu prisijungti.
-  echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\rrr-leisti.vbs"
-  echo UAC.ShellExecute "cmd.exe", "/c ""%~f0"" elevated", "", "runas", 1 >> "%temp%\rrr-leisti.vbs"
-  cscript //nologo "%temp%\rrr-leisti.vbs"
-  del "%temp%\rrr-leisti.vbs" >nul 2>&1
+  echo.
+  echo Telefono kelias neatsidare. Be to lango telefonas sio kompiuterio neatidarys.
+  echo.
 )
 
 where py >nul 2>&1
@@ -23,8 +20,3 @@ if errorlevel 1 (
 )
 echo.
 pause
-exit /b
-
-:addrule
-netsh advfirewall firewall add rule name="RRR forma" dir=in action=allow protocol=TCP localport=8765 remoteip=localsubnet profile=any
-exit /b 0
