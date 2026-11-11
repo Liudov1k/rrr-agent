@@ -6,13 +6,14 @@ import json
 import socket
 import threading
 import time
+import unicodedata
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from rrr_agent.client import RrrApiError, RrrClient
-from rrr_agent.config import Settings, load_settings
+from rrr_agent.config import Settings, load_settings, project_root
 from rrr_agent.nuotraukos import content_type, parse_multipart, resolve_photo, save_image
 from rrr_agent.skelbimai import publish
 from rrr_agent.viesos import ensure_photo_base
@@ -23,6 +24,7 @@ MODEL_BRANDS = (80, 103)
 DEFAULT_CAR_IDS = ("4", "15", "18")
 _garage_cache: dict[str, object] = {"at": 0.0, "cars": []}
 _choice_cache: dict[str, object] = {"at": 0.0, "choices": None}
+_ovoko_code_cache: dict[str, tuple[float, str]] = {}
 
 
 def garage_cars(settings: Settings) -> list[dict[str, str]]:
@@ -127,6 +129,79 @@ def choice_lists(settings: Settings) -> dict[str, list[dict[str, str]]]:
     return choices
 
 
+def _code_key(value: str) -> str:
+    folded = unicodedata.normalize("NFD", value.casefold())
+    plain = "".join(char for char in folded if not unicodedata.combining(char))
+    return "".join(char for char in plain if char.isalnum())
+
+
+def category_for_code(settings: Settings, code: str) -> str:
+    """Naujausios Ovoko dalies kategorija pagal tą patį gamintojo kodą."""
+    key = _code_key(code)
+    compact = "".join(char for char in code if char.isalnum())
+    if len(key) < 3 or not compact or settings.missing():
+        return ""
+    cached = _ovoko_code_cache.get(key)
+    now = time.time()
+    if cached and now - cached[0] < (600 if cached[1] else 30):
+        return cached[1]
+    client = RrrClient(settings)
+    payload = client.post(f"/v2/get/parts?search={quote(compact)}&limit=100&page=1&sort[id]=desc")
+    found = category_from_parts(payload, key)
+    _ovoko_code_cache[key] = (now, found)
+    return found
+
+
+def category_from_parts(payload: dict, key: str) -> str:
+    """Iš paieškos ima tikslų kodą. Jei kategorijos skiriasi, laimi naujausia dalis."""
+    best_id = -1
+    best = ""
+    for part in _part_rows(payload.get("data")):
+        if _code_key(str(part.get("manufacturer_code") or "")) != key:
+            continue
+        category = str(part.get("category_id") or "").strip()
+        try:
+            part_id = int(str(part.get("id") or "0"))
+        except ValueError:
+            part_id = 0
+        if category and part_id >= best_id:
+            best_id = part_id
+            best = category
+    return best
+
+
+def _part_rows(data: object):
+    if isinstance(data, dict):
+        yield data
+        return
+    if isinstance(data, list):
+        for item in data:
+            yield from _part_rows(item)
+
+
+def remembered_categories() -> dict[str, str]:
+    """Kodas -> kategorijos id iš jau sukurtų juodraščių. Vėlesnis įrašas laimi."""
+    root = project_root() / "prekes" / "partijos"
+    found: dict[str, str] = {}
+    if not root.is_dir():
+        return found
+    files = [path for path in root.glob("*/*.json") if path.is_file()]
+    files.sort(key=lambda path: path.stat().st_mtime)
+    for path in files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        part = data.get("detale") if isinstance(data, dict) else None
+        if not isinstance(part, dict):
+            continue
+        key = _code_key(str(part.get("manufacturer_code") or ""))
+        category_id = str(part.get("category_id") or "").strip()
+        if key and category_id:
+            found[key] = category_id
+    return found
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -148,11 +223,21 @@ class Handler(BaseHTTPRequestHandler):
             page = PAGE.read_text(encoding="utf-8").encode("utf-8")
             self._send(200, page, "text/html; charset=utf-8")
             return
+        if path == "/api/kategorija":
+            code = (parse_qs(urlparse(self.path).query).get("kodas") or [""])[0]
+            try:
+                category_id = category_for_code(load_settings(), code)
+            except RrrApiError:
+                category_id = ""
+            self._json(200, {"id": category_id})
+            return
         if path == "/api/sarasai":
             try:
-                self._json(200, choice_lists(load_settings()))
+                payload = dict(choice_lists(load_settings()))
+                payload["kodai"] = remembered_categories()
+                self._json(200, payload)
             except RrrApiError as exc:
-                self._json(400, {"klaida": str(exc), "kategorijos": [], "kokybe": [], "pozicijos": [], "vairas": []})
+                self._json(400, {"klaida": str(exc), "kategorijos": [], "kokybe": [], "pozicijos": [], "vairas": [], "kodai": {}})
             return
         if path == "/api/automobiliai":
             try:

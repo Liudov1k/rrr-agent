@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from rrr_agent.client import RrrApiError
 from rrr_agent.preke import load_draft, save_draft
+from rrr_agent.server import category_from_parts
 from rrr_agent.skelbimai import apply_public_photos, build_drafts, upload_draft
 
 
@@ -149,6 +150,17 @@ class ListingsTest(unittest.TestCase):
             with patch("rrr_agent.skelbimai.time.sleep"):
                 result = upload_draft(path, FakeClient())
             self.assertEqual(result["part_id"], 10)
+
+    def test_newest_matching_code_keeps_its_category(self):
+        payload = {
+            "data": [
+                [{"id": "10", "manufacturer_code": "MTC 8358", "category_id": "1"}],
+                {"id": "20", "manufacturer_code": "MTC-8358", "category_id": "1209"},
+                {"id": "15", "manufacturer_code": "OTHER", "category_id": "9"},
+            ]
+        }
+        self.assertEqual(category_from_parts(payload, "mtc8358"), "1209")
+        self.assertEqual(category_from_parts(payload, "kitas"), "")
 
     def test_new_car_needs_model_year_and_status(self):
         with self.assertRaises(ValueError):

@@ -121,6 +121,7 @@
       box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
     }
     .cat-list[hidden] { display: none; }
+    .cat-list button[hidden] { display: none !important; }
     .cat-list button {
       display: block;
       width: 100%;
@@ -403,6 +404,66 @@
     const categorySearch = document.querySelector("#kategorija-paieska");
     const categoryId = document.querySelector("#kategorija-id");
     const categoryList = document.querySelector("#kategoriju-sarasas");
+    const codeInput = document.querySelector("[name=manufacturer_code]");
+    const codeMemoryKey = "rrr-kodai";
+
+    function codeKey(value) {
+      return foldText(value).replace(/[^a-z0-9]+/g, "");
+    }
+
+    function loadCodeMap() {
+      try {
+        const data = JSON.parse(localStorage.getItem(codeMemoryKey) || "{}");
+        return data && typeof data === "object" ? data : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveCodeMap(map) {
+      localStorage.setItem(codeMemoryKey, JSON.stringify(map));
+    }
+
+    function rememberCurrentCode() {
+      const key = codeKey(codeInput.value);
+      if (!key || !categoryId.value) return;
+      const map = loadCodeMap();
+      map[key] = { id: categoryId.value, pavadinimas: categorySearch.value };
+      saveCodeMap(map);
+    }
+
+    let codeLookup = 0;
+
+    function fillCategoryById(id) {
+      const button = [...categoryList.querySelectorAll("button")].find((item) => item.dataset.id === String(id));
+      if (!button) return false;
+      chooseCategory(button, true);
+      return true;
+    }
+
+    function applyRememberedCategory() {
+      const key = codeKey(codeInput.value);
+      const typed = codeInput.value.trim();
+      if (!key) return;
+      const saved = loadCodeMap()[key];
+      if (saved) fillCategoryById(saved.id);
+      if (key.length < 3) return;
+      const ticket = ++codeLookup;
+      clearTimeout(applyRememberedCategory.timer);
+      applyRememberedCategory.timer = setTimeout(() => {
+        fetch(`/api/kategorija?kodas=${encodeURIComponent(typed)}`)
+          .then((response) => response.json())
+          .then((data) => {
+            if (ticket !== codeLookup || codeKey(codeInput.value) !== key || !data.id) return;
+            const button = [...categoryList.querySelectorAll("button")].find((item) => item.dataset.id === String(data.id));
+            const map = loadCodeMap();
+            map[key] = { id: String(data.id), pavadinimas: button ? button.textContent : (map[key] || {}).pavadinimas || "" };
+            saveCodeMap(map);
+            if (button) chooseCategory(button, true);
+          })
+          .catch(() => {});
+      }, 400);
+    }
 
     function foldText(value) {
       return value.toLocaleLowerCase("lt").normalize("NFD").replace(/\p{M}/gu, "");
@@ -426,23 +487,52 @@
       if ([...select.options].some((option) => option.value === current)) select.value = current;
     }
 
+    function categoryNote(text) {
+      let note = categoryList.querySelector("p");
+      if (!note) {
+        note = document.createElement("p");
+        categoryList.prepend(note);
+      }
+      note.hidden = !text;
+      note.textContent = text || "";
+      return note;
+    }
+
     function filterCategories() {
       const query = foldText(categorySearch.value.trim());
-      let visible = 0;
-      categoryList.querySelectorAll("button").forEach((button) => {
-        const matched = !query || button.dataset.fold.includes(query);
-        button.hidden = !matched;
-        if (matched) visible += 1;
+      const buttons = [...categoryList.querySelectorAll("button")];
+      buttons.forEach((button) => {
+        button.hidden = true;
       });
-      const note = categoryList.querySelector("p");
-      if (note) note.hidden = visible > 0;
+      if (!query) {
+        categoryNote("Rašyk kategorijos pavadinimą.");
+        categoryList.hidden = false;
+        return;
+      }
+      const matched = buttons.filter((button) => button.dataset.fold.includes(query));
+      matched.sort((left, right) => {
+        const leftName = left.dataset.fold.split("›").pop().trim();
+        const rightName = right.dataset.fold.split("›").pop().trim();
+        const leftRank = leftName.startsWith(query) ? 0 : 1;
+        const rightRank = rightName.startsWith(query) ? 0 : 1;
+        return leftRank - rightRank || left.textContent.localeCompare(right.textContent, "lt");
+      });
+      matched.slice(0, 40).forEach((button) => {
+        button.hidden = false;
+        categoryList.append(button);
+      });
+      if (!matched.length) categoryNote("Tokios kategorijos nėra.");
+      else if (matched.length > 40) categoryNote(`Rodo pirmas 40 iš ${matched.length}. Įrašyk dar raidę.`);
+      else categoryNote("");
       categoryList.hidden = false;
     }
 
-    function chooseCategory(button) {
+    function chooseCategory(button, silent) {
       categoryId.value = button.dataset.id;
       categorySearch.value = button.textContent;
+      categorySearch.setCustomValidity("");
       categoryList.hidden = true;
+      if (!silent) rememberCurrentCode();
     }
 
     categorySearch.addEventListener("focus", filterCategories);
@@ -453,10 +543,12 @@
     categorySearch.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       const visible = [...categoryList.querySelectorAll("button")].filter((button) => !button.hidden);
-      if (visible.length !== 1) return;
+      if (!visible.length) return;
       event.preventDefault();
       chooseCategory(visible[0]);
     });
+    codeInput.addEventListener("input", applyRememberedCategory);
+    codeInput.addEventListener("change", applyRememberedCategory);
     categoryList.addEventListener("mousedown", (event) => event.preventDefault());
     document.addEventListener("click", (event) => {
       if (!document.querySelector("#kategorija").contains(event.target)) categoryList.hidden = true;
@@ -757,12 +849,21 @@
         categories.forEach((item) => {
           const button = document.createElement("button");
           button.type = "button";
+          button.hidden = true;
           button.dataset.id = item.id;
           button.dataset.fold = foldText(item.pavadinimas);
           button.textContent = item.pavadinimas;
           button.addEventListener("click", () => chooseCategory(button));
           categoryList.append(button);
         });
+        const known = loadCodeMap();
+        Object.entries(data.kodai || {}).forEach(([key, id]) => {
+          if (known[key]) return;
+          const button = [...categoryList.querySelectorAll("button")].find((item) => item.dataset.id === String(id));
+          if (button) known[key] = { id: String(id), pavadinimas: button.textContent };
+        });
+        saveCodeMap(known);
+        applyRememberedCategory();
         if (data.kokybe?.length) fillChoice(document.querySelector("#kokybe"), data.kokybe, "", "0");
         if (data.pozicijos?.length) fillChoice(document.querySelector("#pozicija"), data.pozicijos, "Dalies pozicija", "");
         if (data.vairas?.length) fillChoice(document.querySelector("#vairas"), data.vairas, "", "0");
@@ -785,6 +886,7 @@
         return;
       }
       categorySearch.setCustomValidity("");
+      rememberCurrentCode();
       const data = new FormData(form);
       const photos = [...codePicked, ...picked].filter((url) => (
         url.startsWith("/nuotraukos/") || url.startsWith("http://") || url.startsWith("https://")
