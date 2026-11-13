@@ -17,10 +17,22 @@ if (-not (Test-Admin)) {
     exit $process.ExitCode
 }
 
-$rule = Get-NetFirewallRule -DisplayName "RRR forma" -ErrorAction SilentlyContinue
-if (-not $rule) {
-    New-NetFirewallRule -DisplayName "RRR forma" -Name "RRR forma" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -Profile Any -RemoteAddress LocalSubnet | Out-Null
-}
+Set-NetFirewallProfile -Profile Domain,Public,Private -AllowInboundRules True
+
+Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |
+    Where-Object { $_.Program -match 'python' } |
+    ForEach-Object {
+        $rule = Get-NetFirewallRule -Name $_.InstanceID -ErrorAction SilentlyContinue
+        if ($rule -and $rule.Direction -eq "Inbound" -and $rule.Action -eq "Block") {
+            Remove-NetFirewallRule -Name $rule.Name
+            Write-Host "Pasalintas Python uzdraudimas."
+        }
+    }
+
+Get-NetFirewallRule -DisplayName "RRR forma" -ErrorAction SilentlyContinue |
+    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+
+New-NetFirewallRule -DisplayName "RRR forma" -Name "RRR forma" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -Profile Any | Out-Null
 
 Write-Host "Telefonui leista."
 exit 0

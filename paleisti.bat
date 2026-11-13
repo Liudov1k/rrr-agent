@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Atidarau kelia telefonui. Jei isoks Windows langas, spausk Taip.
+echo Atidarau kelia telefonui is naujo. Jei isoks Windows langas, spausk Taip.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0leisti-telefona.ps1"
 if errorlevel 1 (
   echo.
