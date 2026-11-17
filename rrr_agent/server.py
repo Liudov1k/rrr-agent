@@ -57,7 +57,8 @@ def garage_cars(settings: Settings) -> list[dict[str, str]]:
         else:
             title = f"Automobilis {car_id}" + (f", {years}" if years else "")
         cars.append({"id": car_id, "pavadinimas": title, "metai": years})
-    cars.sort(key=lambda car: car["pavadinimas"])
+    # Naujesni Ovoko automobiliai (didesnis id) sąrašo viršuje.
+    cars.sort(key=lambda car: (-int(car["id"]) if car["id"].isdigit() else 0, car["pavadinimas"]))
     _garage_cache["at"] = now
     _garage_cache["cars"] = cars
     return cars
@@ -257,6 +258,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "prijungta": not missing,
                     "truksta": missing,
+                    "kompiuterio_adresas": f"http://127.0.0.1:{port}/",
                     "telefono_adresai": [f"http://{ip}:{port}/" for ip in lan_addresses()],
                 },
             )
@@ -345,9 +347,46 @@ def _prepare_photos() -> None:
     print("Nuotraukų ryšys paruoštas. Kitos prekės kils greičiau.")
 
 
+def open_in_chrome(url: str) -> None:
+    """Atidaro formą Chrome. Jei Chrome nėra, naudoja numatytąją naršyklę."""
+    import os
+    import shutil
+    import subprocess
+
+    candidates: list[str] = []
+    for name in ("chrome", "google-chrome", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    windir = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    windir_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+    local = os.environ.get("LOCALAPPDATA", "")
+    for path in (
+        fr"{windir}\Google\Chrome\Application\chrome.exe",
+        fr"{windir_x86}\Google\Chrome\Application\chrome.exe",
+        fr"{local}\Google\Chrome\Application\chrome.exe",
+    ):
+        if path and Path(path).is_file():
+            candidates.append(path)
+    for chrome in candidates:
+        try:
+            subprocess.Popen([chrome, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except OSError:
+            continue
+    for name in ("chrome", "google-chrome", "chromium"):
+        try:
+            webbrowser.get(name).open(url)
+            return
+        except webbrowser.Error:
+            continue
+    webbrowser.open(url)
+
+
 def serve(host: str = "0.0.0.0", port: int = 8765, open_browser: bool = True) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Kompiuteryje atidaryta: http://127.0.0.1:{port}/")
+    computer_url = f"http://127.0.0.1:{port}/"
+    print(f"Kompiuteryje atidaryta Chrome: {computer_url}")
     phone_urls = [f"http://{ip}:{port}/" for ip in lan_addresses()]
     if phone_urls:
         print("Telefone, tame pačiame Wi-Fi, atidaryk:")
@@ -358,7 +397,7 @@ def serve(host: str = "0.0.0.0", port: int = 8765, open_browser: bool = True) ->
     print("Kol naudoji telefoną, šio lango neuždaryk. Baigęs paspausk Ctrl+C.")
     threading.Thread(target=_prepare_photos, daemon=True).start()
     if open_browser:
-        threading.Timer(0.3, lambda: webbrowser.open(f"http://127.0.0.1:{port}/")).start()
+        threading.Timer(0.3, lambda: open_in_chrome(computer_url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
