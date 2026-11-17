@@ -34,6 +34,7 @@
       background: #fff4e8;
       color: #8a4b12;
     }
+    .banner a, .result a { color: inherit; font-weight: 700; }
     .result { margin-top: 14px; }
     .result.ok { background: #e8f6ef; color: #0a5537; }
     .result.bad { background: #fde8e8; color: #9f1239; }
@@ -233,10 +234,37 @@
     .hint { margin: 8px 0 0; color: #667085; font-size: 12px; }
     .gallery { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
     .gallery:empty { display: none; }
-    .shot { position: relative; margin: 0; }
-    .shot img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #eef2f6; }
+    .shot { position: relative; margin: 0; cursor: grab; touch-action: none; }
+    .shot.dragging { opacity: 0.55; cursor: grabbing; }
+    .shot.drag-over { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .shot img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #eef2f6; pointer-events: none; }
     .shot button { position: absolute; top: 6px; right: 6px; padding: 6px 10px; }
     .shot span { display: block; margin-top: 4px; font-size: 12px; color: #667085; font-weight: 500; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chips:empty { display: none; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      font-weight: 500;
+    }
+    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip button {
+      flex: none;
+      border: 0;
+      background: none;
+      color: #667085;
+      padding: 0;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .car-pick { position: relative; }
     .result ul { margin: 8px 0 0; padding-left: 18px; }
     details summary { cursor: pointer; color: #667085; }
     @media (max-width: 720px) {
@@ -291,6 +319,7 @@
             </div>
           </div>
           <div id="galerija" class="gallery"></div>
+          <p class="hint">Tempk nuotraukas, kad pakeistum eilę. Pirmoji tampa pagrindine.</p>
           <p class="photo-status" id="nuotrauku-busena"></p>
         </div>
       </section>
@@ -306,11 +335,13 @@
           <button class="text-link" type="button" id="prideti-koda">Pridėti kodą</button>
 
           <div class="cat" id="kategorija">
-            <input class="field selectish" id="kategorija-paieska" autocomplete="off" required placeholder=" ">
-            <span class="ghost-label">Kategorija <i>*</i></span>
+            <input class="field selectish" id="kategorija-paieska" autocomplete="off" placeholder=" ">
+            <span class="ghost-label">Dalies pavadinimas iš medžio <i>*</i></span>
             <input type="hidden" name="category_id" id="kategorija-id">
             <div class="cat-list" id="kategoriju-sarasas" hidden></div>
           </div>
+          <div id="pasirinktos-kategorijos" class="chips" aria-live="polite"></div>
+          <p class="hint">Gali pridėti kelis pavadinimus — kiekvienam bus atskiri skelbimai su tais pačiais duomenimis.</p>
 
           <div class="pair">
             <label class="boxed">
@@ -383,7 +414,7 @@
         </div>
         <p class="preview" id="preview">Kraunami automobiliai...</p>
         <div class="cars" id="automobiliai"></div>
-        <p class="hint">Kiekvienas automobilis gaus atskirą skelbimą su tais pačiais dalies duomenimis.</p>
+        <p class="hint">Naujas automobilis įrašomas viršuje. Rašyk paieškoje, kad greitai rastum. Kiekvienas automobilis × kiekvienas pavadinimas = atskiras skelbimas.</p>
       </section>
 
       <div class="actions">
@@ -404,6 +435,8 @@
     const categorySearch = document.querySelector("#kategorija-paieska");
     const categoryId = document.querySelector("#kategorija-id");
     const categoryList = document.querySelector("#kategoriju-sarasas");
+    const selectedCategoriesBox = document.querySelector("#pasirinktos-kategorijos");
+    const selectedCategories = [];
     const codeInput = document.querySelector("[name=manufacturer_code]");
     const codeMemoryKey = "rrr-kodai";
 
@@ -426,20 +459,14 @@
 
     function rememberCurrentCode() {
       const key = codeKey(codeInput.value);
-      if (!key || !categoryId.value) return;
+      const last = selectedCategories[selectedCategories.length - 1];
+      if (!key || !last) return;
       const map = loadCodeMap();
-      map[key] = { id: categoryId.value, pavadinimas: categorySearch.value };
+      map[key] = { id: last.id, pavadinimas: last.pavadinimas };
       saveCodeMap(map);
     }
 
     let codeLookup = 0;
-
-    function fillCategoryById(id) {
-      const button = [...categoryList.querySelectorAll("button")].find((item) => item.dataset.id === String(id));
-      if (!button) return false;
-      chooseCategory(button, true);
-      return true;
-    }
 
     function applyRememberedCategory() {
       const key = codeKey(codeInput.value);
@@ -459,7 +486,7 @@
             const map = loadCodeMap();
             map[key] = { id: String(data.id), pavadinimas: button ? button.textContent : (map[key] || {}).pavadinimas || "" };
             saveCodeMap(map);
-            if (button) chooseCategory(button, true);
+            if (button) fillCategoryById(String(data.id));
           })
           .catch(() => {});
       }, 400);
@@ -527,17 +554,64 @@
       categoryList.hidden = false;
     }
 
-    function chooseCategory(button, silent) {
-      categoryId.value = button.dataset.id;
-      categorySearch.value = button.textContent;
+    function syncCategoryField() {
+      if (!selectedCategories.length) {
+        categoryId.value = "";
+        categorySearch.setCustomValidity("Pasirink bent vieną dalies pavadinimą iš medžio.");
+        return;
+      }
+      categoryId.value = selectedCategories[0].id;
       categorySearch.setCustomValidity("");
+    }
+
+    function drawSelectedCategories() {
+      selectedCategoriesBox.replaceChildren();
+      selectedCategories.forEach((item, index) => {
+        const chip = document.createElement("div");
+        chip.className = "chip";
+        const label = document.createElement("span");
+        label.textContent = item.pavadinimas;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.setAttribute("aria-label", "Šalinti pavadinimą");
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          selectedCategories.splice(index, 1);
+          drawSelectedCategories();
+          refresh();
+        });
+        chip.append(label, remove);
+        selectedCategoriesBox.append(chip);
+      });
+      syncCategoryField();
+    }
+
+    function chooseCategory(button, silent) {
+      const id = button.dataset.id;
+      const name = button.textContent;
+      const existing = selectedCategories.findIndex((item) => item.id === id);
+      if (existing >= 0) selectedCategories.splice(existing, 1);
+      selectedCategories.push({ id, pavadinimas: name });
+      categorySearch.value = "";
       categoryList.hidden = true;
+      drawSelectedCategories();
+      refresh();
       if (!silent) rememberCurrentCode();
+    }
+
+    function fillCategoryById(id) {
+      const button = [...categoryList.querySelectorAll("button")].find((item) => item.dataset.id === String(id));
+      if (!button) return false;
+      if (selectedCategories.some((item) => item.id === String(id))) {
+        categoryId.value = String(id);
+        return true;
+      }
+      chooseCategory(button, true);
+      return true;
     }
 
     categorySearch.addEventListener("focus", filterCategories);
     categorySearch.addEventListener("input", () => {
-      categoryId.value = "";
       filterCategories();
     });
     categorySearch.addEventListener("keydown", (event) => {
@@ -552,13 +626,18 @@
     categoryList.addEventListener("mousedown", (event) => event.preventDefault());
     document.addEventListener("click", (event) => {
       if (!document.querySelector("#kategorija").contains(event.target)) categoryList.hidden = true;
+      document.querySelectorAll(".car-pick .cat-list").forEach((list) => {
+        if (!list.parentElement.contains(event.target)) list.hidden = true;
+      });
     });
 
-    function drawList(list, container, labelFor) {
+    function drawList(list, container, labelFor, draggable) {
       container.innerHTML = "";
       list.forEach((url, index) => {
         const figure = document.createElement("figure");
         figure.className = "shot";
+        figure.draggable = Boolean(draggable);
+        figure.dataset.index = String(index);
         const image = document.createElement("img");
         image.src = url;
         image.alt = labelFor(index);
@@ -572,14 +651,42 @@
           list.splice(index, 1);
           drawAll();
         });
+        if (draggable) {
+          figure.addEventListener("dragstart", (event) => {
+            figure.classList.add("dragging");
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", String(index));
+          });
+          figure.addEventListener("dragend", () => {
+            figure.classList.remove("dragging");
+            container.querySelectorAll(".shot").forEach((item) => item.classList.remove("drag-over"));
+          });
+          figure.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            figure.classList.add("drag-over");
+          });
+          figure.addEventListener("dragleave", () => figure.classList.remove("drag-over"));
+          figure.addEventListener("drop", (event) => {
+            event.preventDefault();
+            figure.classList.remove("drag-over");
+            const from = Number(event.dataTransfer.getData("text/plain"));
+            const to = Number(figure.dataset.index);
+            if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
+            const [moved] = list.splice(from, 1);
+            list.splice(to, 0, moved);
+            drawAll();
+            photoStatus(container, "Pagrindinė nuotrauka atnaujinta pagal eilę.");
+          });
+        }
         figure.append(image, remove, caption);
         container.append(figure);
       });
     }
 
     function drawAll() {
-      drawList(codePicked, codeGallery, () => "Kodo nuotrauka");
-      drawList(picked, gallery, (index) => (index === 0 ? "Pagrindinė" : `Nuotrauka ${index + 1}`));
+      drawList(codePicked, codeGallery, () => "Kodo nuotrauka", false);
+      drawList(picked, gallery, (index) => (index === 0 ? "Pagrindinė" : `Nuotrauka ${index + 1}`), true);
     }
 
     async function preparePhoto(file) {
@@ -705,25 +812,62 @@
       }[char]));
     }
 
+    function filterCarList(card) {
+      const search = card.querySelector("[name=auto_paieska]");
+      const list = card.querySelector(".cat-list");
+      const query = foldText(search.value.trim());
+      const words = query.split(/\s+/).filter(Boolean);
+      list.replaceChildren();
+      const matched = catalog.filter((car) => {
+        if (!words.length) return true;
+        const hay = foldText(car.pavadinimas + " " + car.id);
+        return words.every((word) => hay.includes(word));
+      }).slice(0, 40);
+      if (!matched.length) {
+        const note = document.createElement("p");
+        note.textContent = query ? "Tokio automobilio nėra." : "Rašyk markę, modelį ar metus.";
+        list.append(note);
+      } else {
+        matched.forEach((car) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.id = car.id;
+          button.textContent = car.pavadinimas;
+          button.addEventListener("click", () => {
+            card.querySelector("[name=pavadinimas]").value = car.pavadinimas;
+            card.querySelector("[name=car_id]").value = car.id;
+            search.value = car.pavadinimas;
+            list.hidden = true;
+            refresh();
+          });
+          list.append(button);
+        });
+        if (catalog.filter((car) => {
+          if (!words.length) return true;
+          const hay = foldText(car.pavadinimas + " " + car.id);
+          return words.every((word) => hay.includes(word));
+        }).length > 40) {
+          const note = document.createElement("p");
+          note.textContent = "Rodo pirmas 40. Įrašyk dar raidę.";
+          list.prepend(note);
+        }
+      }
+      list.hidden = false;
+    }
+
     function carCard(selected) {
       const card = document.createElement("article");
       card.className = "car";
-      const options = catalog.map((car) => {
-        const picked = selected && selected.id === car.id ? " selected" : "";
-        return `<option value="${escapeHtml(car.id)}"${picked}>${escapeHtml(car.pavadinimas)}</option>`;
-      }).join("");
       card.innerHTML = `
         <header>
           <strong>Automobilis</strong>
           <button class="ghost" type="button" data-remove>Pašalinti</button>
         </header>
         <div class="grid">
-          <label class="wide">Automobilis
-            <select name="pasirinkimas">
-              <option value="">Pasirink arba pataisyk žemiau</option>
-              ${options}
-            </select>
-          </label>
+          <div class="wide cat car-pick">
+            <input class="field selectish" name="auto_paieska" autocomplete="off" placeholder="Greitoji paieška: markė, modelis, metai" value="${selected ? escapeHtml(selected.pavadinimas) : ""}">
+            <div class="cat-list" hidden></div>
+          </div>
           <label class="wide">Pavadinimas
             <input name="pavadinimas" required placeholder="Land Rover Defender 1997" value="${selected ? escapeHtml(selected.pavadinimas) : ""}">
           </label>
@@ -746,17 +890,24 @@
           </div>
         </details>
       `;
-      const choice = card.querySelector("[name=pasirinkimas]");
-      choice.addEventListener("change", () => {
-        const car = catalog.find((item) => item.id === choice.value);
-        if (!car) return;
-        card.querySelector("[name=pavadinimas]").value = car.pavadinimas;
-        card.querySelector("[name=car_id]").value = car.id;
-        refresh();
+      const search = card.querySelector("[name=auto_paieska]");
+      const list = card.querySelector(".cat-list");
+      search.addEventListener("focus", () => filterCarList(card));
+      search.addEventListener("input", () => filterCarList(card));
+      search.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const first = list.querySelector("button");
+        if (!first) return;
+        event.preventDefault();
+        first.click();
       });
+      list.addEventListener("mousedown", (event) => event.preventDefault());
       card.querySelector("[name=car_id]").addEventListener("input", () => {
         const match = catalog.find((item) => item.id === card.querySelector("[name=car_id]").value.trim());
-        choice.value = match ? match.id : "";
+        if (match) {
+          card.querySelector("[name=pavadinimas]").value = match.pavadinimas;
+          search.value = match.pavadinimas;
+        }
       });
       card.querySelector("[data-remove]").addEventListener("click", () => {
         if (cars.children.length === 1) return;
@@ -768,7 +919,7 @@
     }
 
     function refresh() {
-      const count = cars.children.length;
+      const carCount = cars.children.length;
       [...cars.children].forEach((card, index) => {
         card.querySelector("strong").textContent = `Automobilis ${index + 1}`;
       });
@@ -779,13 +930,19 @@
         .map((input) => input.value.trim())
         .filter(Boolean);
       if (ids.length) localStorage.setItem("rrr-automobiliai", JSON.stringify(ids));
+      const categoryCount = selectedCategories.length;
+      const listingCount = categoryCount ? carCount * categoryCount : carCount;
+      const parts = categoryCount
+        ? `${categoryCount} pavad. × ${carCount} auto`
+        : `${carCount} auto`;
       const listed = names.length ? `: ${names.join(", ")}` : "";
-      preview.textContent = `Bus sukurti ${count} skelbimai${listed}.`;
+      preview.textContent = `Bus sukurti ${listingCount} skelbimai (${parts})${listed}.`;
     }
 
     document.querySelector("#prideti").addEventListener("click", () => {
-      cars.append(carCard());
+      cars.prepend(carCard());
       refresh();
+      cars.firstElementChild.scrollIntoView({ block: "nearest" });
     });
 
     fetch("/api/automobiliai")
@@ -822,14 +979,15 @@
     fetch("/api/busena")
       .then((response) => response.json())
       .then((data) => {
+        const computer = data.kompiuterio_adresas || "http://127.0.0.1:8765/";
         const phone = (data.telefono_adresai || []).join(" arba ");
-        const phoneLine = phone ? ` Telefone atidaryk ${phone}` : "";
+        const phoneLine = phone ? ` Telefone atidaryk ${phone}.` : "";
         if (data.prijungta) {
           banner.className = "banner result ok";
-          banner.textContent = `Ovoko prisijungimas įrašytas. Sukūrus skelbimus jie bus iškart įkelti.${phoneLine}`;
+          banner.innerHTML = `Ovoko prisijungimas įrašytas. Sukūrus skelbimus jie bus iškart įkelti. Kompiuteryje (Chrome, visi skyriai): <a href="${computer}">${computer}</a>.${phoneLine}`;
           return;
         }
-        banner.textContent = `Ovoko rakto dar nėra, todėl skelbimai ir nuotraukos bus paruošti šiame kompiuteryje.${phoneLine}`;
+        banner.innerHTML = `Ovoko rakto dar nėra, todėl skelbimai ir nuotraukos bus paruošti šiame kompiuteryje. Kompiuteryje (Chrome, visi skyriai): <a href="${computer}">${computer}</a>.${phoneLine}`;
       })
       .catch(() => {
         banner.textContent = "Nepavyko patikrinti prisijungimo.";
@@ -878,8 +1036,9 @@
     document.querySelector("#forma").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
-      if (!categoryId.value) {
-        categorySearch.setCustomValidity("Pasirink kategoriją iš sąrašo.");
+      syncCategoryField();
+      if (!selectedCategories.length) {
+        categorySearch.setCustomValidity("Pasirink bent vieną dalies pavadinimą iš medžio.");
         categorySearch.reportValidity();
         categorySearch.focus();
         filterCategories();
@@ -896,7 +1055,7 @@
         .filter(Boolean);
       const payload = {
         detale: {
-          category_id: data.get("category_id"),
+          category_id: selectedCategories[0].id,
           quality: data.get("quality"),
           status: data.get("status"),
           mechanic: data.get("mechanic") || "6",
@@ -912,6 +1071,10 @@
           photo: photos[0] || "",
           photos
         },
+        kategorijos: selectedCategories.map((item) => ({
+          id: item.id,
+          pavadinimas: item.pavadinimas
+        })),
         matmenys: {
           svoris: data.get("svoris"),
           ilgis: data.get("ilgis"),
@@ -969,8 +1132,9 @@
       document.querySelector("#nuotrauku-busena").textContent = "";
       form.querySelector("[name=manufacturer_code]").value = "";
       document.querySelector("#papildomi-kodai").replaceChildren();
+      selectedCategories.splice(0, selectedCategories.length);
+      drawSelectedCategories();
       categorySearch.value = "";
-      categoryId.value = "";
       form.querySelector("[name=sticker_note]").value = "";
       stickerCount.textContent = "0/32";
       form.querySelector("[name=notes]").value = defaultNotes;
@@ -981,6 +1145,10 @@
       form.querySelector("#pozicija").value = "";
       form.querySelector("#kokybe").value = "0";
       form.querySelector("#vairas").value = "0";
+      // Naujas skelbimas neprisiriša prie praeito skelbimo mašinų.
+      cars.replaceChildren(carCard());
+      localStorage.removeItem("rrr-automobiliai");
+      refresh();
     }
   </script>
 </body>

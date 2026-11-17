@@ -45,6 +45,56 @@ class ListingsTest(unittest.TestCase):
         self.assertEqual(car_ids, [10, 11, 12])
         self.assertEqual({draft["detale"]["mechanic"] for draft in drafts}, {6})
         self.assertEqual(len(set(external_ids)), 3)
+        self.assertTrue(all("-c42-" in item for item in external_ids))
+
+    def test_multiple_category_names_create_separate_listings(self):
+        drafts = build_drafts(
+            {
+                "detale": PART,
+                "kategorijos": [
+                    {"id": 42, "pavadinimas": "Kėbulas › Bamperiai › Priekinis bamperis"},
+                    {"id": 99, "pavadinimas": "Kėbulas › Sparnai › Priekinis sparnas"},
+                ],
+                "automobiliai": [
+                    {"pavadinimas": "Defender", "car_id": 4},
+                    {"pavadinimas": "Discovery", "car_id": 15},
+                ],
+            }
+        )
+        self.assertEqual(len(drafts), 4)
+        self.assertEqual(
+            [draft["detale"]["category_id"] for draft in drafts],
+            [42, 99, 42, 99],
+        )
+        self.assertEqual(
+            {draft["detale"]["external_id"] for draft in drafts},
+            {
+                "8r0807217-c42-defender",
+                "8r0807217-c99-defender",
+                "8r0807217-c42-discovery",
+                "8r0807217-c99-discovery",
+            },
+        )
+        self.assertEqual(drafts[0]["_pavadinimas"], "Priekinis bamperis · Defender")
+        self.assertEqual(drafts[1]["_pavadinimas"], "Priekinis sparnas · Defender")
+
+    def test_same_code_other_category_gets_new_external_id(self):
+        first = build_drafts(
+            {
+                "detale": {**PART, "category_id": 42},
+                "automobiliai": [{"pavadinimas": "Defender", "car_id": 4}],
+            }
+        )
+        second = build_drafts(
+            {
+                "detale": {**PART, "category_id": 77},
+                "kategorijos": [{"id": 77, "pavadinimas": "Kita detalė"}],
+                "automobiliai": [{"pavadinimas": "Defender", "car_id": 4}],
+            }
+        )
+        self.assertNotEqual(first[0]["detale"]["external_id"], second[0]["detale"]["external_id"])
+        self.assertEqual(first[0]["detale"]["car_id"], second[0]["detale"]["car_id"])
+        self.assertEqual(first[0]["detale"]["manufacturer_code"], second[0]["detale"]["manufacturer_code"])
 
     def test_duplicate_car_is_rejected(self):
         with self.assertRaises(ValueError):

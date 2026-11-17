@@ -147,16 +147,53 @@ def _apply_dimensions(part: dict[str, Any], dims: Any) -> dict[str, Any]:
     return part
 
 
+def _category_choices(payload: dict[str, Any], part: dict[str, Any]) -> list[dict[str, Any]]:
+    """Vienas ar keli dalies pavadinimai iš medžio. Kiekvienas duoda atskirus skelbimus."""
+    raw = payload.get("kategorijos")
+    choices: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for index, item in enumerate(raw, start=1):
+            if isinstance(item, dict):
+                category_id = _integer(item.get("id") or item.get("category_id"), f"{index} kategorija")
+                label = _text(item.get("pavadinimas")) or f"Kategorija {category_id}"
+            else:
+                category_id = _integer(item, f"{index} kategorija")
+                label = f"Kategorija {category_id}"
+            if category_id is None:
+                raise ValueError(f"{index} kategorija: trūksta ID.")
+            choices.append({"id": category_id, "pavadinimas": label})
+    if not choices:
+        category_id = part.get("category_id")
+        if category_id is None:
+            raise ValueError("Pasirink bent vieną dalies pavadinimą iš medžio.")
+        choices.append({"id": category_id, "pavadinimas": f"Kategorija {category_id}"})
+    seen: set[int] = set()
+    unique: list[dict[str, Any]] = []
+    for item in choices:
+        if item["id"] in seen:
+            raise ValueError(f"Dalies pavadinimas pasirinktas dukart: {item['pavadinimas']}.")
+        seen.add(item["id"])
+        unique.append(item)
+    return unique
+
+
 def build_drafts(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Sukuria po vieną juodraštį kiekvienam automobiliui. Dalies laukai visuose vienodi."""
+    """Sukuria juodraščius kiekvienai kategorijai ir kiekvienam automobiliui."""
     cars = payload.get("automobiliai")
     if not isinstance(cars, list) or not cars:
         raise ValueError("Pridėk bent vieną automobilį.")
-    if len(cars) > 30:
-        raise ValueError("Vienu kartu galima kurti ne daugiau kaip 30 skelbimų.")
 
     part = _apply_dimensions(_part_fields(payload.get("detale") or {}), payload.get("matmenys"))
-    base_code = _slug(_text((payload.get("detale") or {}).get("external_id")) or _text(part.get("manufacturer_code")) or "dalis")
+    categories = _category_choices(payload, part)
+    total = len(cars) * len(categories)
+    if total > 30:
+        raise ValueError("Vienu kartu galima kurti ne daugiau kaip 30 skelbimų.")
+
+    base_code = _slug(
+        _text((payload.get("detale") or {}).get("external_id"))
+        or _text(part.get("manufacturer_code"))
+        or "dalis"
+    )
     seen_ids: set[int] = set()
     seen_slugs: set[str] = set()
     drafts: list[dict[str, Any]] = []
@@ -164,47 +201,54 @@ def build_drafts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for index, raw_car in enumerate(cars, start=1):
         if not isinstance(raw_car, dict):
             raise ValueError(f"{index} automobilis užpildytas neteisingai.")
-        title = _text(raw_car.get("pavadinimas")) or f"Automobilis {index}"
-        car_id = _integer(raw_car.get("car_id"), f"{title} ID")
-        car_model = _integer(raw_car.get("car_model"), f"{title} modelis")
+        car_title = _text(raw_car.get("pavadinimas")) or f"Automobilis {index}"
+        car_id = _integer(raw_car.get("car_id"), f"{car_title} ID")
+        car_model = _integer(raw_car.get("car_model"), f"{car_title} modelis")
         car_years = _text(raw_car.get("car_years"))
-        car_status = _integer(raw_car.get("status"), f"{title} būsena")
+        car_status = _integer(raw_car.get("status"), f"{car_title} būsena")
 
         if car_id is not None:
             if car_id in seen_ids:
-                raise ValueError(f"Automobilis {title} pasirinktas dukart.")
+                raise ValueError(f"Automobilis {car_title} pasirinktas dukart.")
             seen_ids.add(car_id)
         elif car_model is None or not car_years or car_status is None:
             raise ValueError(
-                f"{title}: įrašyk Ovoko automobilio ID arba modelio ID, metus ir būseną."
+                f"{car_title}: įrašyk Ovoko automobilio ID arba modelio ID, metus ir būseną."
             )
 
-        slug = _slug(title)
-        if slug in seen_slugs:
-            slug = f"{slug}-{index}"
-        seen_slugs.add(slug)
+        car_slug = _slug(car_title)
+        if car_slug in seen_slugs:
+            car_slug = f"{car_slug}-{index}"
+        seen_slugs.add(car_slug)
 
-        detale = dict(part)
-        detale["external_id"] = f"{base_code}-{slug}"
-        draft: dict[str, Any] = {
-            "_pavadinimas": title,
-            "detale": detale,
-        }
-        if car_id is not None:
-            detale["car_id"] = car_id
-        else:
-            draft["automobilis"] = {
-                "external_id": f"auto-{slug}",
-                "car_model": car_model,
-                "car_years": car_years,
-                "status": car_status,
-                "ovoko_id": None,
+        for category in categories:
+            category_id = category["id"]
+            leaf = category["pavadinimas"].split("›")[-1].strip() or category["pavadinimas"]
+            title = f"{leaf} · {car_title}" if len(categories) > 1 else car_title
+            # Kategorija į external_id, kad tas pats kodas kitu pavadinimu kurtų naują,
+            # o ne redaguotų praeito skelbimo detalę / mašiną.
+            detale = dict(part)
+            detale["category_id"] = category_id
+            detale["external_id"] = f"{base_code}-c{category_id}-{car_slug}"
+            draft: dict[str, Any] = {
+                "_pavadinimas": title,
+                "detale": detale,
             }
+            if car_id is not None:
+                detale["car_id"] = car_id
+            else:
+                draft["automobilis"] = {
+                    "external_id": f"auto-{car_slug}",
+                    "car_model": car_model,
+                    "car_years": car_years,
+                    "status": car_status,
+                    "ovoko_id": None,
+                }
 
-        errors, _warnings = check_draft(draft)
-        if errors:
-            raise ValueError(f"{title}: " + " ".join(errors))
-        drafts.append(draft)
+            errors, _warnings = check_draft(draft)
+            if errors:
+                raise ValueError(f"{title}: " + " ".join(errors))
+            drafts.append(draft)
 
     return drafts
 
